@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ParkWise — Scope</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a222c;
+    --panel-2: #212c38;
+    --ink: #e8eef4;
+    --muted: #9fb0c0;
+    --accent: #4fd1c5;
+    --accent-2: #63b3ed;
+    --now: #4fd1c5;
+    --later: #d6a74f;
+    --cut: #e07b7b;
+    --line: #2d3a48;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 70% -10%, #16202b 0%, var(--bg) 55%);
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 48px 24px 80px; }
+  header .eyebrow {
+    letter-spacing: .18em; text-transform: uppercase; font-size: 12px;
+    color: var(--accent); font-weight: 700;
+  }
+  h1 { font-size: 44px; margin: 6px 0 4px; letter-spacing: -0.5px; }
+  .tagline { color: var(--muted); font-size: 18px; max-width: 70ch; margin: 0 0 8px; }
+  .status {
+    display: inline-block; margin-top: 14px; padding: 4px 12px; border-radius: 999px;
+    background: rgba(79,209,197,.12); color: var(--accent);
+    border: 1px solid rgba(79,209,197,.35); font-size: 13px; font-weight: 600;
+  }
+  section { margin-top: 40px; }
+  h2 {
+    font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--line);
+    padding-bottom: 8px; margin-bottom: 16px;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px;
+  }
+  .kernel { border-color: rgba(79,209,197,.4); box-shadow: 0 0 0 1px rgba(79,209,197,.08) inset; }
+  .kernel strong { color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 680px){ .grid2 { grid-template-columns: 1fr; } h1{font-size:34px;} }
+  .mini-title { font-weight: 700; margin-bottom: 6px; color: var(--ink); }
+  p.body { color: var(--muted); margin: 0; }
+  blockquote {
+    margin: 0; padding: 12px 16px; border-left: 3px solid var(--accent-2);
+    background: rgba(99,179,237,.07); border-radius: 0 10px 10px 0; color: #cfe0ef; font-style: italic;
+  }
+
+  /* Flow diagram */
+  .flow { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+  .node {
+    flex: 1 1 150px; min-width: 150px; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px; text-align: center;
+  }
+  .node .n-label { font-weight: 700; font-size: 15px; }
+  .node .n-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .node.user { border-color: var(--accent-2); }
+  .node.proof { border-color: var(--accent); }
+  .arrow { align-self: center; color: var(--accent); font-size: 22px; font-weight: 700; }
+  @media (max-width: 680px){ .arrow { transform: rotate(90deg); } }
+
+  /* now/later/cut reveals */
+  details {
+    border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px;
+    background: var(--panel); overflow: hidden;
+  }
+  details summary {
+    cursor: pointer; padding: 14px 18px; font-weight: 700; list-style: none;
+    display: flex; align-items: center; gap: 10px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.now { background: var(--now); }
+  .dot.later { background: var(--later); }
+  .dot.cut { background: var(--cut); }
+  .chev { margin-left: auto; color: var(--muted); transition: transform .2s; }
+  details[open] .chev { transform: rotate(90deg); }
+  details .content { padding: 0 18px 16px 18px; }
+  ul.clean { margin: 0; padding-left: 20px; color: var(--muted); }
+  ul.clean li { margin: 6px 0; }
+  .cut-reason { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+  code { background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Build With AI: Basics &middot; Scope</div>
+    <h1>ParkWise</h1>
+    <p class="tagline">A browser-based, interactive 3D parking simulator where a learner driver actually drives the car to practice real parking maneuvers — with physics-based movement and a coach that gives real spatial guidance.</p>
+    <span class="status">● Scope approved</span>
+  </header>
+
+  <section>
+    <h2>The Unique Kernel</h2>
+    <div class="card kernel">
+      <p class="body">It's <strong>realistic, not arcade.</strong> Unlike the many pay-store arcade parking games, ParkWise models the car with <strong>real physics</strong> (not random or faked motion) and includes a <strong>coach</strong> that gives genuine spatial guidance — how far the car ahead is, how much room is left behind, how far to reverse and adjust — alongside proper reference lines. Real physics + a real coach is the thing a learner would miss if it were gone.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>User → Core Loop → Proof</h2>
+    <div class="flow">
+      <div class="node user">
+        <div class="n-label">The Learner</div>
+        <div class="n-sub">Cousin prepping for her driving test — anxious about parking</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-label">Drives the car</div>
+        <div class="n-sub">Opens the link, lands in a scenario, steers &amp; reverses herself</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-label">Coach guides</div>
+        <div class="n-sub">Live distances + can demonstrate the maneuver</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node proof">
+        <div class="n-label">Parks cleanly</div>
+        <div class="n-sub">Pass/fail vs. the lines → reset → try again</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Who It's For</h2>
+    <div class="card">
+      <p class="body">The learner's cousin: a learner driver preparing for her test who is anxious about parking and doesn't yet have a good grip on the maneuvers. Today she can only practice in a real car (stressful, limited chances) or play arcade games that don't behave like a real car. She wants a low-pressure place to practice until the maneuvers feel natural. Broader learner drivers are a welcome bonus.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The Core Loop</h2>
+    <div class="card">
+      <p class="body">She opens the link in a browser — nothing to install — and is in a parking scenario straight away. She <strong style="color:var(--ink)">drives the car herself</strong> (steer, forward, reverse). The coach gives live spatial guidance (distance to the car ahead/behind, how much to reverse, when to straighten) and can also <strong style="color:var(--ink)">demonstrate the maneuver itself</strong> — a "watch how it's done" tutorial mode. She sees whether she parked cleanly within the lines, then resets and retries until it feels natural.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why This Matters</h2>
+    <blockquote>"Last week I met my cousin who has her driving test and she was anxious that she didn't have good grip on parking situations."</blockquote>
+    <p class="body" style="margin-top:12px">The learner overcame the same difficulty through a lot of practice and wants to give her a place to build that confidence. It's also a chance to get better at Three.js and at writing code grounded in real-world physics.</p>
+  </section>
+
+  <section>
+    <h2>What "Working" Looks Like</h2>
+    <div class="card">
+      <p class="body">She opens the link, lands in a scenario, and drives the car. The physics make it move like a real car. The coach reports real distances and tells her how much to adjust. She completes a maneuver, gets a clear "parked correctly / hit the curb" verdict, and can reset to retry.</p>
+      <p class="body" style="margin-top:12px"><span style="color:var(--accent);font-weight:700">The "oh, that's cool" beat:</span> reversing into a parallel spot in 3D while the coach counts down the distance to the car behind — and nailing it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The Boundary</h2>
+
+    <details open>
+      <summary><span class="dot now"></span> In — the proof of concept <span class="chev">›</span></summary>
+      <div class="content">
+        <ul class="clean">
+          <li>Interactive 3D scene in the browser (Three.js), drivable car.</li>
+          <li>Physics-based car movement (steering, forward/reverse) that behaves believably.</li>
+          <li>Common parking scenarios — parallel, reverse bay, and angle parking as the core set; more from the learner's own experience if time permits.</li>
+          <li>A coach that gives live spatial guidance with reference lines <em>and</em> can demonstrate the maneuver (tutorial mode).</li>
+          <li>A clear success/fail check against the parking lines.</li>
+          <li>Reset / try again.</li>
+          <li>Proximity sensor sound cues (beeps that speed up near obstacles), likely Web Audio API — included if it fits; approach decided at build.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details>
+      <summary><span class="dot later"></span> Later — worth doing, not now <span class="chev">›</span></summary>
+      <div class="content">
+        <ul class="clean">
+          <li>Further parking scenarios beyond the core set, added from the learner's own experience as time allows.</li>
+          <li>Deployment to a public URL (optional for the hackathon).</li>
+          <li>Scoring, progress tracking, or lessons/levels.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details>
+      <summary><span class="dot cut"></span> Explicitly cut — with reasons <span class="chev">›</span></summary>
+      <div class="content">
+        <ul class="clean">
+          <li><span class="cut-reason">Open world / free driving</span> — expands scope well beyond parking practice; the point is the maneuvers.</li>
+          <li><span class="cut-reason">AI or moving traffic</span> — significant scope increase (behavior, pathfinding) not needed to prove the kernel; static parked cars as obstacles are enough.</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <footer>
+    Canonical plan lives in <code>scope.md</code>. This page is a companion view, regenerated when the scope changes. Next: <code>3-prd</code>.
+  </footer>
+</div>
+</body>
+</html>

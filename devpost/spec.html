@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ParkWise — Technical Spec</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a222c; --panel-2:#212c38; --ink:#e8eef4; --muted:#9fb0c0;
+    --accent:#4fd1c5; --accent-2:#63b3ed; --line:#2d3a48; --warn:#d6a74f;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 70% -10%,#16202b 0%,var(--bg) 55%);color:var(--ink);line-height:1.55;}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 24px 80px;}
+  .eyebrow{letter-spacing:.18em;text-transform:uppercase;font-size:12px;color:var(--accent);font-weight:700;}
+  h1{font-size:42px;margin:6px 0 4px;letter-spacing:-0.5px;}
+  .tagline{color:var(--muted);font-size:18px;max-width:72ch;margin:0 0 8px;}
+  .status{display:inline-block;margin-top:14px;padding:4px 12px;border-radius:999px;background:rgba(79,209,197,.12);
+    color:var(--accent);border:1px solid rgba(79,209,197,.35);font-size:13px;font-weight:600;}
+  section{margin-top:40px;}
+  h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:16px;}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
+  p.body{color:var(--muted);margin:0 0 10px;}
+  code{background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px;font-size:13px;}
+
+  /* data flow diagram */
+  .flow{display:flex;flex-direction:column;gap:12px;}
+  .flow-row{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;justify-content:center;}
+  .fnode{flex:1 1 140px;min-width:130px;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center;}
+  .fnode .t{font-weight:700;font-size:14px;} .fnode .s{color:var(--muted);font-size:12px;margin-top:3px;}
+  .fnode.phys{border-color:var(--accent);} .fnode.coach{border-color:var(--accent-2);}
+  .down{text-align:center;color:var(--accent);font-size:20px;}
+  .loop-label{text-align:center;color:var(--muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase;}
+
+  details{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--panel);overflow:hidden;}
+  details summary{cursor:pointer;padding:13px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px;}
+  details summary::-webkit-details-marker{display:none;}
+  .chev{margin-left:auto;color:var(--muted);transition:transform .2s;} details[open] .chev{transform:rotate(90deg);}
+  details .content{padding:0 18px 16px 18px;color:var(--muted);}
+  .ref{font-size:11px;color:var(--accent);background:rgba(79,209,197,.1);padding:2px 8px;border-radius:999px;font-weight:600;}
+  ul.clean{margin:8px 0 0;padding-left:20px;} ul.clean li{margin:5px 0;}
+  pre{background:#0c1116;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cfe0ef;font-size:13px;line-height:1.5;}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(214,167,79,.14);color:var(--warn);margin-left:6px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;} @media(max-width:680px){.grid2{grid-template-columns:1fr;} h1{font-size:32px;}}
+  .mini{font-weight:700;color:var(--ink);margin-bottom:4px;}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px;}
+  .warnbox{border-left:3px solid var(--warn);background:rgba(214,167,79,.08);padding:12px 16px;border-radius:0 10px 10px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Build With AI: Basics &middot; Technical Spec</div>
+  <h1>ParkWise</h1>
+  <p class="tagline">The blueprint: a single browser page, Three.js for the 3D scene, a hand-written kinematic bicycle model for the car, geometric checks for parking, and a coach that demonstrates then guides. No framework, no bundler, no services.</p>
+  <span class="status">● Spec draft — for review</span>
+
+  <section>
+    <h2>In Plain Language</h2>
+    <div class="card">
+      <p class="body">Open the page → a tiny Node server hands over <code>index.html</code> → it loads Three.js and one main script. Three things then run together:</p>
+      <div class="grid2">
+        <div><div class="mini">① The scene</div><p class="body" style="margin:0">Three.js draws the street/car-park, parked cars, curb, line markings and the learner's car, with four switchable camera views.</p></div>
+        <div><div class="mini">② The car "brain" (physics)</div><p class="body" style="margin:0">A kinematic bicycle model: position, heading, speed, steering angle. It moves like a real car — pivoting around the rear axle, front wheels at their Ackermann angle.</p></div>
+        <div><div class="mini">③ The coach</div><p class="body" style="margin:0">Watches the car vs. the spot, computes distances, shows guidance near the car — and can drive a correct sequence itself to demonstrate.</p></div>
+        <div><div class="mini">Why this shape</div><p class="body" style="margin:0">Smallest honest proof. A full physics engine is heavier and less accurate for walking-pace parking; no build tools means it's fast to run and record.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The Loop — Data Flow Each Frame</h2>
+    <div class="card">
+      <div class="flow">
+        <div class="flow-row">
+          <div class="fnode"><div class="t">Keyboard</div><div class="s">↑↓ / WASD → throttle + steering</div></div>
+          <div class="fnode coach"><div class="t">— or Coach demo</div><div class="s">feeds a correct sequence</div></div>
+        </div>
+        <div class="down">↓</div>
+        <div class="flow-row"><div class="fnode phys" style="flex:0 1 320px"><div class="t">Car model · bicycle physics</div><div class="s">step position, heading, steering → new pose + footprint</div></div></div>
+        <div class="down">↓</div>
+        <div class="flow-row">
+          <div class="fnode"><div class="t">Move 3D car</div><div class="s">scene follows the pose</div></div>
+          <div class="fnode"><div class="t">Collision / parking check</div><div class="s">footprint vs. cars, curb, lines</div></div>
+          <div class="fnode coach"><div class="t">Coach guidance</div><div class="s">distances + adjust prompts</div></div>
+          <div class="fnode"><div class="t">Sensor beeps<span class="pill">if it fits</span></div><div class="s">rate ↑ as it nears</div></div>
+        </div>
+        <div class="down">↓</div>
+        <div class="flow-row"><div class="fnode" style="flex:0 1 220px"><div class="t">Render (active camera)</div></div></div>
+        <div class="loop-label">↻ repeats every animation frame</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Components <span style="font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0;">(each maps to a PRD behavior)</span></h2>
+
+    <details open>
+      <summary>Scene &amp; rendering <span class="ref">Core Journey · Look and Feel</span><span class="chev">›</span></summary>
+      <div class="content">Builds the Three.js world (ground, curb, markings, parked cars, learner car), lighting, renderer, and the animation loop. Feeds the camera system and places the learner's car each frame from the physics.</div>
+    </details>
+    <details>
+      <summary>Car model — kinematic bicycle physics <span class="ref">Driving the car</span><span class="chev">›</span></summary>
+      <div class="content">Holds <code>{ x, z, heading, speed, steerAngle }</code> and advances it from current inputs using bicycle-model geometry. Exposes the footprint for collision/parking checks.</div>
+    </details>
+    <details>
+      <summary>Input handler <span class="ref">Driving the car</span><span class="chev">›</span></summary>
+      <div class="content">Reads arrow keys / WASD → throttle (forward/reverse) + steering intent. Possible mouse support decided at build.</div>
+    </details>
+    <details>
+      <summary>Camera system <span class="ref">Camera views</span><span class="chev">›</span></summary>
+      <div class="content">Four views — top-down, in-car/seat, chase, free isometric — switchable without disturbing the car or its state.</div>
+    </details>
+    <details>
+      <summary>Coach — demonstrate + guide <span class="ref">The coach</span><span class="chev">›</span></summary>
+      <div class="content">
+        <strong style="color:var(--ink)">Guide:</strong> computes distances (car ahead/behind, offset from the line), renders guidance near the car, updates live.<br>
+        <strong style="color:var(--ink)">Demonstrate:</strong> feeds the car model a correct control sequence so it parks itself; yields control on <em>Practice</em>.
+      </div>
+    </details>
+    <details>
+      <summary>Parking check — pass/fail <span class="ref">Parking check</span><span class="chev">›</span></summary>
+      <div class="content">At rest, tests the footprint against markings and obstacles: within the lines, roughly straight, not touching → success. Otherwise no success.</div>
+    </details>
+    <details>
+      <summary>Scenario &amp; reset <span class="ref">Reset and scenario switching</span><span class="chev">›</span></summary>
+      <div class="content">Defines a set of common scenarios (parallel, reverse bay, angle as the core set): start pose, obstacles, bay — each a data entry, so more can be added later. Reset returns to start; switching rebuilds the scene.</div>
+    </details>
+    <details>
+      <summary>Sound <span class="pill">optional</span> <span class="ref">Sensor sound</span><span class="chev">›</span></summary>
+      <div class="content">Web Audio API beeps, rate increasing as the nearest obstacle approaches. Included if it fits.</div>
+    </details>
+    <details>
+      <summary>UI overlay <span class="ref">Screens and Layout</span><span class="chev">›</span></summary>
+      <div class="content">Plain DOM over the canvas, CSS-styled: Practice, camera toggle, reset, scenario toggle, success verdict.</div>
+    </details>
+  </section>
+
+  <section>
+    <h2>Stack &amp; Run</h2>
+    <div class="grid2">
+      <div class="card">
+        <div class="mini">Stack</div>
+        <ul class="clean">
+          <li>Vanilla JS (ES modules) + HTML + CSS — no framework, no bundler</li>
+          <li><a style="color:var(--accent-2)" href="https://threejs.org/docs/">Three.js</a> r0.183, vendored in <code>lib/</code> (no CDN)</li>
+          <li>Hand-written kinematic bicycle model (no physics engine)</li>
+          <li>Geometric overlap for collision + parking check</li>
+          <li><a style="color:var(--accent-2)" href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API">Web Audio API</a> beeps (optional)</li>
+          <li>Node <code>http</code> static server (zero deps)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="mini">Where it runs</div>
+        <ul class="clean">
+          <li>Browser (desktop), served locally by Node</li>
+          <li>No keys, no env vars, no external services</li>
+          <li>Start: <code>npm start</code> → open <code>http://localhost:3000</code></li>
+          <li>Submission = demo video <strong>+</strong> public GitHub repo</li>
+          <li>Deployment optional; local recording is enough</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>File Structure</h2>
+<pre>parkwise/
+├── index.html          # loads Three.js + app.js, holds the UI overlay
+├── app.js              # scene, car model, input, cameras, coach, checks, loop
+├── style.css           # page + overlay styling
+├── server.js           # tiny zero-dependency Node static server
+├── package.json        # "start": node server.js
+├── lib/
+│   ├── three-0.183.2.js  # vendored Three.js
+│   └── fonts.css
+└── devpost/            # planning docs (not app code)
+    ├── learner-profile.md
+    ├── scope.md
+    ├── prd.md
+    └── spec.md</pre>
+    <p class="body">If <code>app.js</code> grows, split components into ES modules (<code>car.js</code>, <code>coach.js</code>, <code>scene.js</code>). Start in one file; split only if it helps.</p>
+  </section>
+
+  <section>
+    <h2>Risks &amp; the One to Verify First</h2>
+    <div class="warnbox">
+      <div class="mini">⚠ Reversing in the bicycle model — verify first</div>
+      <p class="body" style="margin:0">At negative speed the car curves opposite to intuition, and parallel parking is mostly a reverse maneuver. <strong>Plan:</strong> before building the coach, checks, or scenarios, drive the car in reverse and confirm the rear swings the correct way into the bay. This is also the learning-goal moment (real-world-physics code).</p>
+    </div>
+    <ul class="clean" style="color:var(--muted)">
+      <li><strong style="color:var(--ink)">Tunneling at speed</strong> → cap speed to walking pace and check overlap every frame; sub-step if needed.</li>
+      <li><strong style="color:var(--ink)">ES modules via <code>file://</code></strong> → blank page. Always run through <code>npm start</code>; document it.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What Was Simplified</h2>
+    <div class="card"><ul class="clean" style="color:var(--muted)">
+      <li>Bicycle model instead of a physics engine — lighter, more accurate for slow parking, and more educational.</li>
+      <li>Geometric overlap instead of engine collisions — enough to judge a park and a bump.</li>
+      <li>A small set of defined scenarios (parallel, reverse bay, angle) instead of a full level editor — each is a data entry, so more can be added if time permits.</li>
+      <li>No persistence instead of accounts/saved progress — the idea needs no memory between sessions.</li>
+    </ul></div>
+  </section>
+
+  <footer>
+    Canonical plan lives in <code>spec.md</code>. This page is a companion view, regenerated when the spec changes. Next: <code>5-build</code>.
+  </footer>
+</div>
+</body>
+</html>

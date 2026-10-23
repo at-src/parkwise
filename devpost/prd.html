@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ParkWise — Product Requirements</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a222c; --panel-2:#212c38; --ink:#e8eef4; --muted:#9fb0c0;
+    --accent:#4fd1c5; --accent-2:#63b3ed; --build:#4fd1c5; --defer:#d6a74f; --no:#e07b7b; --line:#2d3a48;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 70% -10%,#16202b 0%,var(--bg) 55%);color:var(--ink);line-height:1.55;}
+  .wrap{max-width:940px;margin:0 auto;padding:48px 24px 80px;}
+  .eyebrow{letter-spacing:.18em;text-transform:uppercase;font-size:12px;color:var(--accent);font-weight:700;}
+  h1{font-size:42px;margin:6px 0 4px;letter-spacing:-0.5px;}
+  .tagline{color:var(--muted);font-size:18px;max-width:72ch;margin:0 0 8px;}
+  .status{display:inline-block;margin-top:14px;padding:4px 12px;border-radius:999px;background:rgba(79,209,197,.12);
+    color:var(--accent);border:1px solid rgba(79,209,197,.35);font-size:13px;font-weight:600;}
+  section{margin-top:40px;}
+  h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:16px;}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
+  p.body{color:var(--muted);margin:0;}
+  blockquote{margin:0;padding:12px 16px;border-left:3px solid var(--accent-2);background:rgba(99,179,237,.07);border-radius:0 10px 10px 0;color:#cfe0ef;font-style:italic;}
+
+  /* journey */
+  .journey{display:flex;flex-direction:column;gap:10px;}
+  .step{display:flex;gap:14px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .step .num{flex:0 0 30px;height:30px;width:30px;border-radius:50%;background:rgba(79,209,197,.15);color:var(--accent);
+    display:flex;align-items:center;justify-content:center;font-weight:700;border:1px solid rgba(79,209,197,.4);}
+  .step .st-body{flex:1;}
+  .step .st-title{font-weight:700;}
+  .step .st-sub{color:var(--muted);font-size:14px;margin-top:2px;}
+  .phase{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-2);font-weight:700;margin:14px 0 2px;}
+
+  details{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;background:var(--panel);overflow:hidden;}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;display:flex;align-items:center;gap:10px;}
+  details summary::-webkit-details-marker{display:none;}
+  .chev{margin-left:auto;color:var(--muted);transition:transform .2s;}
+  details[open] .chev{transform:rotate(90deg);}
+  details .content{padding:0 18px 16px 18px;}
+  ul.clean{margin:0;padding-left:20px;color:var(--muted);} ul.clean li{margin:6px 0;}
+  .crit{color:var(--muted);} .crit li::marker{color:var(--accent);}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;margin-left:4px;}
+  .pill.build{background:rgba(79,209,197,.14);color:var(--build);}
+  .pill.defer{background:rgba(214,167,79,.14);color:var(--defer);}
+  .pill.no{background:rgba(224,123,123,.14);color:var(--no);}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
+  .dot.build{background:var(--build);} .dot.defer{background:var(--defer);} .dot.no{background:var(--no);}
+  .cams{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:4px;}
+  @media(max-width:680px){.cams{grid-template-columns:1fr 1fr;} h1{font-size:32px;}}
+  .cam{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center;}
+  .cam .cm-t{font-weight:700;font-size:14px;} .cam .cm-s{color:var(--muted);font-size:12px;margin-top:3px;}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px;}
+  code{background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px;font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Build With AI: Basics &middot; Product Requirements</div>
+  <h1>ParkWise</h1>
+  <p class="tagline">A browser-based, interactive 3D parking simulator where a learner drives a physics-based car to practice real parking maneuvers — the coach demonstrates first, then guides her own attempt.</p>
+  <span class="status">● PRD draft — for review</span>
+
+  <section>
+    <h2>The Core Journey</h2>
+    <div class="journey">
+      <div class="phase">Arrive &amp; watch</div>
+      <div class="step"><div class="num">1</div><div class="st-body"><div class="st-title">Opens the link — lands in a scenario</div><div class="st-sub">No install. The 3D scene is ready: her car, the target spot, parked cars/curb, line markings. One scenario active (e.g. parallel).</div></div></div>
+      <div class="step"><div class="num">2</div><div class="st-body"><div class="st-title">Coach demonstrates automatically</div><div class="st-sub">The car drives itself through the perfect park while she watches, guidance showing near the car.</div></div></div>
+      <div class="phase">Take control &amp; practice</div>
+      <div class="step"><div class="num">3</div><div class="st-body"><div class="st-title">Clicks "Practice"</div><div class="st-sub">Control hands over to her.</div></div></div>
+      <div class="step"><div class="num">4</div><div class="st-body"><div class="st-title">Drives the car herself</div><div class="st-sub">Forward, reverse, steer — arrow keys / WASD. Moves like a real car.</div></div></div>
+      <div class="step"><div class="num">5</div><div class="st-body"><div class="st-title">Coach guides live</div><div class="st-sub">Distances to the car ahead/behind and how much to adjust, shown near the car.</div></div></div>
+      <div class="step"><div class="num">6</div><div class="st-body"><div class="st-title">Switches camera views freely</div><div class="st-sub">Top-down · in-car · chase · free isometric 3D — without interrupting driving.</div></div></div>
+      <div class="phase">Verdict &amp; repeat</div>
+      <div class="step"><div class="num">7</div><div class="st-body"><div class="st-title">Parking check</div><div class="st-sub">Parked correctly = within markings, straight, not touching cars/curb → clear success verdict.</div></div></div>
+      <div class="step"><div class="num">8</div><div class="st-body"><div class="st-title">Reset &amp; retry / switch scenario</div><div class="st-sub">Try again until it feels natural; switch across parallel, reverse bay, and angle parking.</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Camera Views</h2>
+    <div class="cams">
+      <div class="cam"><div class="cm-t">Top-down</div><div class="cm-s">Overhead, 2D-like — judge the spot</div></div>
+      <div class="cam"><div class="cm-t">In-car</div><div class="cm-s">Driver's seat / first-person</div></div>
+      <div class="cam"><div class="cm-t">Chase</div><div class="cm-s">Behind the car</div></div>
+      <div class="cam"><div class="cm-t">Free isometric</div><div class="cm-s">Free 3D angle</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Features &amp; Behavior <span style="font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0;">(tap to expand acceptance criteria)</span></h2>
+
+    <details open>
+      <summary>Driving the car — interactive, physics-based <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>Arrow keys / WASD control forward, reverse, and steering.</li>
+        <li>Turns based on steering + motion (no strafing/teleporting); reverses believably.</li>
+        <li>Responds immediately and continuously while a key is held.</li>
+      </ul></div>
+    </details>
+
+    <details>
+      <summary>The coach — demonstrate, then guide <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>On landing, the coach auto-demonstrates: the car drives itself through a correct park.</li>
+        <li>A "Practice" action hands control to the learner.</li>
+        <li>During her attempt, guidance appears near the car: distance ahead/behind + how much to adjust.</li>
+        <li>Guidance updates live as the car moves.</li>
+      </ul></div>
+    </details>
+
+    <details>
+      <summary>Camera views <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>Four switchable views: top-down, in-car, chase, free isometric 3D.</li>
+        <li>Switching views doesn't interrupt driving or reset the car.</li>
+      </ul></div>
+    </details>
+
+    <details>
+      <summary>Parking check — pass / fail <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>"Parked correctly" = within the markings, roughly straight, not touching parked cars or curb.</li>
+        <li>Correct park → clear success verdict.</li>
+        <li>Not correct → no success; she keeps adjusting.</li>
+      </ul></div>
+    </details>
+
+    <details>
+      <summary>Reset &amp; scenario switching <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>Reset returns the car to the scenario start.</li>
+        <li>Switcher moves across the core scenarios — parallel, reverse bay, angle — with room for more if time permits.</li>
+      </ul></div>
+    </details>
+
+    <details>
+      <summary>Sensor sound <span class="pill defer">if it fits</span> <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean crit">
+        <li>Beeps that speed up as the car nears an obstacle (likely Web Audio API).</li>
+        <li>Included if it fits the PoC; approach decided at build.</li>
+      </ul></div>
+    </details>
+  </section>
+
+  <section>
+    <h2>States</h2>
+    <div class="card"><ul class="clean">
+      <li><strong style="color:var(--ink)">Arrival</strong> — lands in a scenario; coach demo plays automatically.</li>
+      <li><strong style="color:var(--ink)">Demo playing</strong> — car drives itself; her input not required until Practice.</li>
+      <li><strong style="color:var(--ink)">Practicing</strong> — she has control; guidance is live.</li>
+      <li><strong style="color:var(--ink)">Success</strong> — correct park shows the verdict.</li>
+      <li><strong style="color:var(--ink)">Reset</strong> — car returns to the start.</li>
+      <li><strong style="color:var(--ink)">Persistence</strong> — nothing stored; reopening starts fresh.</li>
+    </ul></div>
+  </section>
+
+  <section>
+    <h2>Scope Guardrails</h2>
+    <details open>
+      <summary><span class="dot build"></span> Building now <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean">
+        <li>Single-screen interactive 3D scene (Three.js), loads straight into a scenario.</li>
+        <li>Physics-based, keyboard-driven car.</li>
+        <li>Four switchable camera views.</li>
+        <li>Coach: auto-demo, then live guidance near the car.</li>
+        <li>Pass/fail parking check; reset; switch across the core scenarios (parallel, reverse bay, angle).</li>
+        <li>Proximity sensor sound (if it fits).</li>
+      </ul></div>
+    </details>
+    <details>
+      <summary><span class="dot defer"></span> Deferred from the PoC <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean">
+        <li>Saved progress / accounts — nothing persists.</li>
+        <li>Scenarios beyond the core set — optional additions if time permits, not committed.</li>
+        <li>Deployment to a public URL (optional; submission needs repo + demo video).</li>
+        <li>Mouse steering — keyboard first.</li>
+      </ul></div>
+    </details>
+    <details>
+      <summary><span class="dot no"></span> Non-goals <span class="chev">›</span></summary>
+      <div class="content"><ul class="clean">
+        <li>Open world / free driving — the point is the maneuvers.</li>
+        <li>AI or moving traffic — not needed to prove the kernel; static obstacles suffice.</li>
+        <li>Partial / arcade scoring — pass/fail only.</li>
+      </ul></div>
+    </details>
+  </section>
+
+  <section>
+    <h2>Open Questions (none block the spec)</h2>
+    <div class="card"><ul class="clean">
+      <li>Exact on-screen form of coach guidance (numbers vs. arrows) — decide once the scene renders.</li>
+      <li>Mouse controls alongside keyboard — build-time call.</li>
+      <li>Whether sensor sound makes the PoC cut — add if it fits.</li>
+    </ul></div>
+  </section>
+
+  <footer>
+    Canonical plan lives in <code>prd.md</code>. This page is a companion view, regenerated when the PRD changes. Next: <code>4-spec</code>.
+  </footer>
+</div>
+</body>
+</html>
