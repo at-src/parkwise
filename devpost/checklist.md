@@ -9,7 +9,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
 
 ## Slices
 
-- [ ] **1. The scene renders — you open it and see the parking world**
+- [x] **1. The scene renders — you open it and see the parking world**
   Becomes usable: Running the local server and opening the page shows the 3D world — road/car park, curb, line markings, a few parked cars, and the learner's car sitting in place. Nothing drives yet.
   Why now: Proves the whole setup end to end on the first step — vanilla JS + CSS wired to Three.js through the local server, scene rendering, camera looking at it — so every later slice has somewhere to land. Bootstrapping lives here, not as its own step.
   PRD ref: `prd.md > The Core Journey` (arrival), `prd.md > Look and Feel`

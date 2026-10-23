@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ParkWise · Your driving-school yard in 3D</title>
+    <meta name="theme-color" content="#eef2f7" />
+    <meta
+      name="description"
+      content="Practise parallel, bay, angled and hill parking in a 3D driving-school yard. Watch each move, then drive it yourself."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232563ff'/%3E%3Cpath d='M12 23V9h5a4 4 0 0 1 0 8h-5' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='20' y='20' width='5' height='5' rx='1.4' fill='%23ffbf1f'/%3E%3C/svg%3E"
+    />
+
+    <!-- Local Fonts -->
+    <link rel="stylesheet" href="lib/fonts-pw.css" />
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css" />
+
+    <!-- Camera & Controls Keyboard Listener -->
+    <script>
+      /* house keys: a bare letter belongs to the camera (W A S D Q E C R) or to the sound (M). Every other letter is Shift+letter: a bare one is dropped, and Shift+letter reaches the page as the plain letter it listens for */
+      (() => {
+        const CAM = 'wasdqecrm',
+          f = (e) => {
+            if (
+              e._houseKey ||
+              e.ctrlKey ||
+              e.metaKey ||
+              e.altKey ||
+              e.isComposing
+            )
+              return;
+            const t = e.target,
+              k = e.key;
+            if (
+              !k ||
+              k.length !== 1 ||
+              !/[a-z]/i.test(k) ||
+              CAM.includes(k.toLowerCase()) ||
+              (t &&
+                (t.isContentEditable ||
+                  /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))
+            )
+              return;
+            if (!e.shiftKey) {
+              if (e.type === 'keydown') e.stopImmediatePropagation();
+              return;
+            }
+            e.stopImmediatePropagation();
+            const n = new KeyboardEvent(e.type, {
+              key: k.toLowerCase(),
+              code: e.code,
+              location: e.location,
+              repeat: e.repeat,
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+            });
+            n._houseKey = 1;
+            if (!(t || window).dispatchEvent(n)) e.preventDefault();
+          };
+        addEventListener('keydown', f, true);
+        addEventListener('keyup', f, true);
+      })();
+    </script>
+
+    <!-- Three.js Bundle -->
+    <script src="lib/three-0.183.2.js"></script>
+
+    <!-- Importmap Generator for Three.js ES Modules -->
+    <script>
+      (() => {
+        const L = window.__THREE_LIB || {},
+          m = {};
+        for (const k in L) {
+          m[k] = URL.createObjectURL(
+            new Blob(
+              [
+                Object.keys(L[k])
+                  .map(
+                    (n) =>
+                      (n === 'default'
+                        ? 'export default '
+                        : `export const ${n}=`) +
+                      `__THREE_LIB[${JSON.stringify(k)}][${JSON.stringify(n)}];`,
+                  )
+                  .join(''),
+              ],
+              { type: 'text/javascript' },
+            ),
+          );
+        }
+        const s = document.createElement('script');
+        s.type = 'importmap';
+        s.textContent = JSON.stringify({ imports: m });
+        document.currentScript.after(s);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <main
+        id="world"
+        aria-label="A learner car with a driving-school roof sign parking between other cars in an open-air driving-school yard, by day"
+      >
+        <div id="loading">Opening the yard…</div>
+      </main>
+
+      <div id="veil"></div>
+      <div class="vignette"></div>
+
+      <!-- top bar: the brand, which manoeuvre, how you look at it, the tools -->
+      <header class="topbar">
+        <div class="brand">
+          <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="9" />
+            <path d="M12 23V9h5a4 4 0 0 1 0 8h-5" />
+            <rect class="dot" x="20" y="20" width="5" height="5" rx="1.4" />
+          </svg>
+          <h1 class="wordmark">Park<b>Wise</b></h1>
+        </div>
+        <nav class="man" id="man" role="tablist" aria-label="Manoeuvre"></nav>
+        <div class="topright">
+          <span class="drv" id="side" role="radiogroup" aria-label="Drive on the"
+            ><em>Traffic</em
+            ><button
+              data-s="r"
+              role="radio"
+              title="Traffic keeps right, you sit on the left (⇧L)"
+            >Right</button
+            ><button
+              data-s="l"
+              role="radio"
+              title="Traffic keeps left, you sit on the right, as in India, the UK, Ireland, Australia and Japan (⇧L)"
+            >Left</button></span
+          >
+          <div class="views" id="views" role="radiogroup" aria-label="Camera">
+            <button data-v="3d" role="radio" title="Orbit camera">Orbit</button
+            ><button data-v="top" role="radio" title="Bird’s-eye view">Top</button
+            ><button data-v="behind" role="radio" title="Chase camera">Chase</button
+            ><button
+              data-v="seat"
+              role="radio"
+              title="From the driver’s seat (⇧F)"
+            >Driver</button>
+          </div>
+          <div class="tools">
+            <button
+              id="snd"
+              title="Sound (M)"
+              aria-label="Sound"
+              aria-pressed="false"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" id="snd-ic">
+                <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" />
+                <path d="M16 9.5l5 5M21 9.5l-5 5" />
+              </svg>
+            </button>
+            <button id="how" title="Guide" aria-label="Guide">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 4.5h9.5L19 9v10.5H5z" />
+                <path d="M14 4.5V9h5M8.5 13h7M8.5 16.5h5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- right: the lesson, what to do now and why, and every step of it -->
+      <aside class="lesson" aria-label="Lesson">
+        <p class="why" id="why" aria-live="polite"></p>
+        <nav class="job" aria-label="The whole manoeuvre">
+          <div class="job-h">
+            <span id="job-t">Parallel parking</span><em id="job-e">5 steps</em>
+          </div>
+          <ol id="job"></ol>
+        </nav>
+      </aside>
+
+      <!-- bottom left: the steering gauge and the practice switch -->
+      <section class="gauge" aria-label="Steering">
+        <svg
+          class="sw"
+          id="sw"
+          viewBox="-30 -30 60 60"
+          aria-label="Steering wheel"
+          role="img"
+        >
+          <circle class="trk" r="27.5" />
+          <path class="arc" id="sw-arc" d="" />
+          <path class="tgt" id="sw-tgt" d="" />
+          <g id="sw-g">
+            <path class="rim" d="M-16.45 9.5A19 19 0 1 1 16.45 9.5Z" />
+            <path
+              class="spk"
+              d="M-6 1.5L-17 -1.5M6 1.5L17 -1.5M-3.5 5.5L-6.5 9.5M3.5 5.5L6.5 9.5"
+            />
+            <rect class="hub" x="-6.5" y="-4" width="13" height="10" rx="3" />
+            <rect class="top" x="-1.7" y="-22" width="3.4" height="6.4" rx="1.2" />
+          </g>
+        </svg>
+        <div class="swt">
+          <b id="sw-t">Wheel centred</b
+          ><small id="sw-s">front wheels straight</small>
+        </div>
+        <button class="mode" id="mode" title="Drive it yourself (⇧P)">
+          <svg viewBox="0 0 24 24" aria-hidden="true" id="mode-ic">
+            <path d="M6 15.5 8 9.5c.3-.9 1-1.5 2-1.5h4c1 0 1.7.6 2 1.5l2 6" />
+            <path d="M4.5 15.5h15v3h-15zM7.5 18.5v1.5M16.5 18.5v1.5" /></svg
+          ><span id="mode-t">Practice</span>
+        </button>
+      </section>
+
+      <!-- bottom: the player dock (watching) or the coach and pedals (practising), and the common mistake -->
+      <section class="ctl dock" id="ctl" aria-label="Controls">
+        <div class="stepper watch-only">
+          <button
+            id="prev"
+            title="Previous step ([)"
+            aria-label="Previous step"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 5v14M18 6l-8 6 8 6z" />
+            </svg>
+          </button>
+          <button
+            id="play"
+            class="go"
+            title="Play the whole manoeuvre (space)"
+            aria-label="Play"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" id="play-ic">
+              <path d="M7 5v14l12-7z" />
+            </svg>
+          </button>
+          <button id="next" title="Next step (])" aria-label="Next step">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 5v14M6 6l8 6-8 6z" />
+            </svg>
+          </button>
+          <div class="now">
+            <b id="st-title">Find a gap</b
+            ><small id="st-sub">before step 1</small>
+          </div>
+        </div>
+        <div class="grp watch-only scrub">
+          <span class="lab">Progress <em>[ ] · 1–5 · space</em></span>
+          <div
+            class="tl"
+            id="tl"
+            role="slider"
+            tabindex="0"
+            aria-label="Timeline of the manoeuvre"
+            aria-valuemin="0"
+            aria-valuemax="5"
+          >
+            <div class="tr"></div>
+            <div class="fl" id="tl-fl"></div>
+            <div class="nums" id="tl-nums"></div>
+            <div class="kn" id="tl-kn"></div>
+          </div>
+        </div>
+        <div class="coach drive-only" id="coach" aria-live="polite">
+          <b id="co-t">Drive up alongside</b
+          ><small id="co-s">hold ↑ to creep forwards</small>
+          <div class="bar"><i id="co-bar"></i></div>
+        </div>
+        <div class="pedals drive-only">
+          <button class="pedal" id="p-fwd" aria-label="Creep forwards (hold)">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 19V5M6 11l6-6 6 6" /></svg
+            >Drive <kbd>↑</kbd>
+          </button>
+          <button
+            class="pedal rev"
+            id="p-rev"
+            aria-label="Creep backwards (hold)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M6 13l6 6 6-6" /></svg
+            >Reverse <kbd>↓</kbd>
+          </button>
+        </div>
+        <div class="grp watch-only slot">
+          <button class="wrong" id="wrong" aria-pressed="false">
+            <span class="ic"
+              ><svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5" />
+                <path d="M6 6l12 12" /></svg></span
+            ><span class="tx"
+              ><b id="wr-t">See the classic mistake</b
+              ><small id="wr-s">and what it costs you</small></span
+            ><kbd>⇧T</kbd>
+          </button>
+        </div>
+        <div class="grp drive-only slot">
+          <button class="wrong again" id="again">
+            <span class="ic"
+              ><svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 12a8 8 0 1 0 2.3-5.6" />
+                <path d="M4 4v4.4h4.4" /></svg></span
+            ><span class="tx"
+              ><b>Reset the car</b
+              ><small id="ag-s">from the beginning</small></span
+            ><kbd>⇧Z</kbd>
+          </button>
+        </div>
+      </section>
+
+      <div id="tip" aria-hidden="true"></div>
+      <div class="err" id="err" role="status" aria-live="polite">
+        <i
+          ><svg viewBox="0 0 24 24" aria-hidden="true" id="err-ic">
+            <path d="M7 7l10 10M17 7 7 17" /></svg></i
+        ><span><b id="err-t"></b><small id="err-s"></small></span>
+      </div>
+
+      <aside id="tune" hidden aria-label="Render tuning">
+        <h3>Render <em id="tune-fps">—</em></h3>
+        <div id="tune-rows"></div>
+        <p id="tune-foot">
+          <kbd>↑↓</kbd> row · <kbd>←→</kbd> value · drag a bar ·
+          <kbd>⇧</kbd> coarse · <kbd>0</kbd> reset row · <kbd>⇧0</kbd> reset all
+          · <kbd>C</kbd> copy
+        </p>
+        <textarea
+          id="tune-json"
+          spellcheck="false"
+          aria-label="Tuning values as JSON"
+        ></textarea>
+      </aside>
+      <div id="ui-hint" aria-hidden="true"></div>
+
+      <dialog id="info">
+        <button id="close" aria-label="Close">×</button>
+        <span class="kicker">ParkWise guide</span>
+        <h2>Parking, explained</h2>
+        <p>
+          ParkWise walks you through five everyday parking jobs, one move at a
+          time, the way an instructor would call them out. Hit play to watch a
+          whole manoeuvre or step through it. When you’re ready, switch to
+          <b>Practice</b> and drive it yourself while the coach tells you what’s
+          next. Pick <b>Driver</b> under the camera options to sit behind the
+          wheel, mirrors included.
+        </p>
+        <h3>The pivot point</h3>
+        <p>
+          Every turn your car makes is a circle around one spot. That spot sits
+          on the line of the rear axle, out on the side you’re steering
+          towards. With the wheel wound all the way round, it’s roughly
+          <b id="i-r">3.8 m</b> from the centre of the rear axle.
+        </p>
+        <ul>
+          <li>
+            <b>Rear wheels take a tighter line.</b> Turn in too soon going
+            forwards and the back of the car clips whatever’s beside you.
+          </li>
+          <li>
+            <b>The front corner swings widest.</b> It’s the furthest point from
+            the pivot, so it covers the biggest circle.
+          </li>
+          <li>
+            <b>Backing in is the easy way.</b> In reverse the front swings out
+            over open road while the rear tucks neatly into the space.
+          </li>
+        </ul>
+        <h3>Wheel and lock</h3>
+        <p>
+          Winding the wheel from straight to full lock takes about
+          <b id="i-t">1½ turns</b>, which angles the front tyres by about
+          <b>35°</b>. Steer smoothly while the car is rolling slowly. Turning
+          while stationary works, but it scrubs the tyres. To straighten, unwind
+          by the same amount.
+        </p>
+        <h3>Slopes</h3>
+        <p>
+          Point the front wheels so that a rolling car runs into the kerb, not
+          the traffic. <b>Nose uphill</b>: steer away from the kerb and let the
+          car ease back until the front tyre rests on it.
+          <b>Nose downhill</b>: steer towards the kerb and creep forward until
+          it touches. <b>No kerb at all</b>: steer towards the road edge either
+          way. Then handbrake on, and leave it in first (reverse when facing
+          downhill) or P.
+        </p>
+        <h3>Go slow</h3>
+        <p>
+          Walking pace or slower, using the clutch or brake. Check all around
+          before moving and keep checking, not only in the mirrors. If
+          something’s coming, stop and wait.
+        </p>
+        <h3>Left-hand traffic</h3>
+        <p>
+          Set <b>Traffic</b> in the top bar to <b>Left</b> and the whole yard
+          mirrors: the kerb moves to your left, you sit on the right, and every
+          wheel turn swaps sides. ParkWise picks this automatically if your
+          browser’s region drives on the left, such as India, the UK, Ireland,
+          Australia or Japan.
+        </p>
+        <h3>The numbers behind it</h3>
+        <p>
+          The car is an average hatchback: 4.29 m long, 1.79 m wide, a 2.64 m
+          wheelbase and a 10.5 m turning circle. Bays measure 2.5 × 5 m with a
+          6.5 m aisle, the kerbside gap is one and a half car lengths, and the
+          slope is 1 in 10. The paths come from a kinematic bicycle model at
+          walking pace (no tyre slip, front wheels at their Ackermann angles).
+          All parked cars share one body and nothing else moves. The door
+          mirrors are slightly convex, and the kerb-side one dips when you
+          select reverse. Your own car and car park will differ, so use the
+          reference points as a starting guide. Driving forwards into a bay
+          swings the front over the neighbouring bay, so at these sizes it has
+          to be empty. Back in whenever you can.
+        </p>
+        <h3>Shortcuts</h3>
+        <p>
+          <code>⇧1</code>–<code>⇧5</code> choose a manoeuvre · <code>[</code>
+          <code>]</code> previous / next step · <code>1</code>–<code>5</code>
+          jump to a step · <code>space</code> play · <code>C</code> tour all
+          five · <code>⇧T</code> the classic mistake · drag your car to run a
+          step · <code>⇧P</code> practice · while practising, <code>↑</code>
+          <code>↓</code> (or <code>W</code> <code>S</code>) creep forward and
+          back, <code>←</code> <code>→</code> (or <code>A</code>
+          <code>D</code>) steer, drag the car or the wheel, and
+          <code>⇧Z</code> resets · <code>⇧V</code> next camera (orbit, top,
+          chase, driver) · <code>⇧L</code> swap traffic side · <code>⇧F</code>
+          driver’s seat and back, drag to look around · <code>M</code> sound
+          · <code>R</code> reset the camera · <code>⇧N</code> labels · drag to
+          orbit, right-drag to pan, scroll to zoom, <code>Q</code>
+          <code>E</code> to rotate
+        </p>
+      </dialog>
+    </div>
+
+    <!-- Main Application -->
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
