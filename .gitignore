@@ -1,0 +1,14 @@
+node_modules/
+original.html
+*.backup.*
+.DS_Store
+Thumbs.db
+
+# Personal learning context — keep out of commits by default
+/devpost/learner-profile.md
+/parkwise/devpost/learner-profile.md
+
+# Local credentials (allow a secret-free example)
+.env
+.env.*
+!.env.example

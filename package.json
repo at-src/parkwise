@@ -1,0 +1,12 @@
+{
+  "name": "parking-sim-local",
+  "version": "1.0.0",
+  "description": "Local browser-based 3D parking simulator",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
