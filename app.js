@@ -1487,6 +1487,405 @@ function makerMark(w, o = {}) {
   });
   return m;
 }
+// ======================================================================= the explanation layer (drawn over the lens pass): glowing ribbons and tags
+// ---- ribbons: camera-facing glowing strips, rebuilt every frame (a few thousand quads), hidden behind solid things by the overlay depth test.
+// On the pale Studio set additive light vanishes, so there they blend normally and darker (setLight).
+class Ribbons {
+  constructor(max) {
+    this.max = max;
+    const g = new THREE.BufferGeometry();
+    this.pos = new Float32Array(max * 12);
+    this.side = new Float32Array(max * 4);
+    this.col = new Float32Array(max * 16);
+    const idx = new Uint32Array(max * 6);
+    for (let i = 0; i < max; i++) {
+      const a = i * 4;
+      idx.set([a, a + 1, a + 2, a + 1, a + 3, a + 2], i * 6);
+    }
+    g.setAttribute(
+      'position',
+      new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage),
+    );
+    g.setAttribute(
+      'aSide',
+      new THREE.BufferAttribute(this.side, 1).setUsage(THREE.DynamicDrawUsage),
+    );
+    g.setAttribute(
+      'aCol',
+      new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage),
+    );
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    this.mesh = new THREE.Mesh(
+      g,
+      new THREE.ShaderMaterial({
+        uniforms: {
+          ...OV_U,
+          uSoft: { value: 0.35 },
+          uLight: { value: 0 },
+          uLightK: { value: 0.66 },
+        },
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        vertexShader:
+          'attribute float aSide;attribute vec4 aCol;varying float vS;varying vec4 vC;void main(){vS=aSide;vC=aCol;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+        fragmentShader: `${OV_DEPTH}varying float vS;varying vec4 vC;uniform float uSoft;uniform float uLight;uniform float uLightK;
+    void main(){float k=exp(-vS*vS*3.2),core=exp(-vS*vS*26.);float a=(k*.5+core*1.5)*vC.a*ovVis(uSoft);
+     if(uLight>.5)gl_FragColor=vec4(vC.rgb*uLightK*(1.+core*.45),clamp(a*1.9,0.,1.));else gl_FragColor=vec4(vC.rgb*a,1.);}`,
+      }),
+    );
+    this.mesh.frustumCulled = false;
+    this.n = 0;
+    overlay.add(this.mesh);
+  }
+  setLight(on) {
+    const m = this.mesh.material;
+    m.uniforms.uLight.value = on ? 1 : 0;
+    m.blending = on ? THREE.NormalBlending : THREE.AdditiveBlending;
+  }
+  begin() {
+    this.n = 0;
+    _cp.copy(camera.position);
+    _cf.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    // from the seat, nothing is drawn inside your own car: a cue from your bumper or a line from your back axle would cross the cabin
+    this.inCar = VW === 'seat';
+    if (this.inCar) {
+      LEARNER.car.updateWorldMatrix(true, false);
+      _ci.copy(LEARNER.car.matrixWorld).invert();
+    }
+  }
+  // a strip from a to b, half-width wa at a and wb at b (world units), colour c (THREE.Color, may exceed 1 to glow) with alpha a0 at a and a1 at b.
+  // Never narrower than RB_MIN render pixels (half-width): the bright core is a seventh of the band, and under half a pixel it falls
+  // between pixel centres, so the line beads into dashes that crawl as soon as anything moves. A thinner one is drawn RB_MIN wide and
+  // dimmer by the same factor: the same light, spread over pixels that can hold it.
+  seg(a, b, wa, wb, c, a0, a1) {
+    if (this.n >= this.max) return;
+    if (this.inCar && !this._cut) {
+      const la = _cl.copy(a).applyMatrix4(_ci),
+        d = _cd.copy(b).applyMatrix4(_ci).sub(la);
+      let t0 = 0,
+        t1 = 1;
+      for (let k = 0; k < 3 && t0 <= t1; k++) {
+        const o = la.getComponent(k),
+          dk = d.getComponent(k),
+          lo = CAR_BOX[k][0],
+          hi = CAR_BOX[k][1];
+        if (Math.abs(dk) < 1e-9) {
+          if (o < lo || o > hi) t1 = -1;
+          continue;
+        }
+        const u = (lo - o) / dk,
+          v = (hi - o) / dk;
+        t0 = Math.max(t0, Math.min(u, v));
+        t1 = Math.min(t1, Math.max(u, v));
+      }
+      if (t0 < t1) {
+        if (t0 <= 1e-6 && t1 >= 1 - 1e-6) return;
+        // draw what lies outside the car: up to two pieces, each cut once only
+        const A = a.clone(),
+          B = b.clone();
+        this._cut = 1;
+        if (t0 > 1e-6)
+          this.seg(
+            A,
+            _cl.lerpVectors(A, B, t0).clone(),
+            wa,
+            lerp(wa, wb, t0),
+            c,
+            a0,
+            lerp(a0, a1, t0),
+          );
+        if (t1 < 1 - 1e-6)
+          this.seg(
+            _cl.lerpVectors(A, B, t1).clone(),
+            B,
+            lerp(wa, wb, t1),
+            wb,
+            c,
+            lerp(a0, a1, t1),
+            a1,
+          );
+        this._cut = 0;
+        return;
+      }
+    }
+    // cut at the camera's near plane: a strip with an end behind the eye would project across the whole screen (from the seat, the
+    // step's path starts under the car you sit in)
+    const nd = camera.near * 1.5,
+      da = _rv.subVectors(a, _cp).dot(_cf),
+      db = _rv.subVectors(b, _cp).dot(_cf);
+    if (da < nd && db < nd) return;
+    if (da < nd) {
+      const t = (nd - da) / (db - da);
+      a = _ca.lerpVectors(a, b, t);
+      wa = lerp(wa, wb, t);
+      a0 = lerp(a0, a1, t);
+    } else if (db < nd) {
+      const t = (nd - db) / (da - db);
+      b = _cb.lerpVectors(b, a, t);
+      wb = lerp(wb, wa, t);
+      a1 = lerp(a1, a0, t);
+    }
+    const i = this.n++;
+    const ma = RB_MIN * rpx(a),
+      mb = RB_MIN * rpx(b);
+    if (wa < ma) {
+      a0 *= wa / ma;
+      wa = ma;
+    }
+    if (wb < mb) {
+      a1 *= wb / mb;
+      wb = mb;
+    }
+    _rd.subVectors(b, a);
+    _rm.addVectors(a, b).multiplyScalar(0.5);
+    _rv.subVectors(camera.position, _rm);
+    _rs.crossVectors(_rd, _rv).normalize();
+    const P = this.pos,
+      o = i * 12;
+    P[o] = a.x - _rs.x * wa;
+    P[o + 1] = a.y - _rs.y * wa;
+    P[o + 2] = a.z - _rs.z * wa;
+    P[o + 3] = a.x + _rs.x * wa;
+    P[o + 4] = a.y + _rs.y * wa;
+    P[o + 5] = a.z + _rs.z * wa;
+    P[o + 6] = b.x - _rs.x * wb;
+    P[o + 7] = b.y - _rs.y * wb;
+    P[o + 8] = b.z - _rs.z * wb;
+    P[o + 9] = b.x + _rs.x * wb;
+    P[o + 10] = b.y + _rs.y * wb;
+    P[o + 11] = b.z + _rs.z * wb;
+    this.side.set([-1, 1, -1, 1], i * 4);
+    const C = this.col,
+      q = i * 16;
+    for (let k = 0; k < 4; k++) {
+      C[q + k * 4] = c.r;
+      C[q + k * 4 + 1] = c.g;
+      C[q + k * 4 + 2] = c.b;
+      C[q + k * 4 + 3] = k < 2 ? a0 : a1;
+    }
+  }
+  // a polyline through pts (Vector3[]), px pixels wide on screen, alpha per point from fa(i/(n-1)) (default 1)
+  line(pts, px, c, fa) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const t0 = i / (pts.length - 1),
+        t1 = (i + 1) / (pts.length - 1);
+      this.seg(
+        pts[i],
+        pts[i + 1],
+        pxW(pts[i], px),
+        pxW(pts[i + 1], px),
+        c,
+        fa ? fa(t0) : 1,
+        fa ? fa(t1) : 1,
+      );
+    }
+  }
+  end() {
+    const g = this.mesh.geometry,
+      n = Math.max(this.n, 1);
+    g.setDrawRange(0, this.n * 6); // upload only the strips drawn this frame
+    for (const [k, per] of [
+      ['position', 12],
+      ['aSide', 4],
+      ['aCol', 16],
+    ]) {
+      const a = g.attributes[k];
+      a.clearUpdateRanges();
+      a.addUpdateRange(0, n * per);
+      a.needsUpdate = true;
+    }
+  }
+}
+const _ci = new THREE.Matrix4(),
+  _cl = new THREE.Vector3(),
+  _cd = new THREE.Vector3(),
+  CAR_BOX = [
+    [-2.16, 2.24],
+    [-0.05, 1.5],
+    [-0.93, 0.93],
+  ]; // the car's own box, in its frame (metres)
+const _rd = new THREE.Vector3(),
+  _rm = new THREE.Vector3(),
+  _rv = new THREE.Vector3(),
+  _rs = new THREE.Vector3(),
+  _cp = new THREE.Vector3(),
+  _cf = new THREE.Vector3(),
+  _ca = new THREE.Vector3(),
+  _cb = new THREE.Vector3();
+const rays = new Ribbons(6000);
+rays.setLight(true); // daylight yard: solid ink-like strokes, not glowing light (additive light vanishes on a bright scene)
+// a world-space half-width that looks px pixels wide from the camera (CSS pixels); rpx(p) is the world size of one rendered pixel at p
+const pxW = (p, px) =>
+  ((camera.position.distanceTo(p) *
+    Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+    2) /
+    Math.max(host.clientHeight, 1)) *
+  px *
+  0.5;
+const rpx = (p) =>
+  (camera.position.distanceTo(p) *
+    Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+    2) /
+  Math.max(host.clientHeight * renderer.getPixelRatio(), 1);
+const RB_MIN = 3.6; // render pixels: the core's sigma is then half a pixel, enough that its sum across a row no longer depends on where it falls
+// ---- tags: dark glass pills with a coloured dot, always on top, a constant size on screen (no outline: the house UI is borderless).
+// They live on a 2D canvas over the WebGL one at the display's own pixel density, not the render's (often 1.1-1.4 on a 2× screen, with the
+// WebGL canvas scaled up to fit), each pill drawn once into its own bitmap and set on whole device pixels: text as crisp as the card's, at
+// any pixel ratio. A tag is 24 CSS px tall (never under 22: the name is then 11.5 px), and where two would overlap the later one steps down
+// clear of it. tag() makes one; t.userData.set(text,sub,dot,align) and t.userData.want (1 shows, 0 fades) as ever; placeTag(t,p,px,dy) once
+// a frame puts it at the world point p (px: its height; dy: shift up in tag heights; align -1 starts it at p, 1 ends it there).
+const tagCv = document.createElement('canvas');
+tagCv.dataset.overlay = 'tags';
+tagCv.style.cssText =
+  'position:absolute;inset:0;width:100%;height:100%;pointer-events:none';
+host.appendChild(tagCv);
+const tg = tagCv.getContext('2d'),
+  TAGS = [];
+let TDPR = 0;
+function tag() {
+  const t = {
+    visible: false,
+    on: false,
+    x: 0,
+    y: 0,
+    h: 24,
+    dy: 0,
+    img: null,
+    at: -1,
+  };
+  t.userData = {
+    key: '',
+    a: 0,
+    want: 1,
+    args: null,
+    set(txt, sub = '', dot = '#2563ff', align = 0) {
+      txt = LR(txt);
+      sub = LR(sub);
+      const key = txt + '|' + sub + '|' + dot + '|' + align;
+      if (key === this.key) return;
+      this.key = key;
+      this.args = [txt, sub, dot, align];
+      t.img = null;
+    },
+  };
+  TAGS.push(t);
+  return t;
+}
+FONT_REDRAW.push(() => TAGS.forEach((t) => (t.img = null)));
+function tagImage(t) {
+  const [txt, sub, dot] = t.userData.args,
+    H = t.h,
+    s = TDPR,
+    fT = H * 0.52,
+    fS = H * 0.46,
+    c = document.createElement('canvas'),
+    g = c.getContext('2d');
+  g.font = `600 ${fT}px Plus Jakarta Sans, sans-serif`;
+  const tw = g.measureText(txt).width;
+  g.font = `500 ${fS}px JetBrains Mono, monospace`;
+  const sw = sub ? g.measureText(sub).width + H * 0.3 : 0;
+  // a white paper tag: square-ish corners, a coloured edge bar on the left, ink text, the number in mono after a hairline
+  const P = 3,
+    W = Math.ceil(H * 0.62 + tw + sw + H * 0.42) + P * 2;
+  c.width = Math.ceil(W * s);
+  c.height = Math.ceil((H + P * 2) * s);
+  g.scale(s, s);
+  g.translate(P, P);
+  g.shadowColor = 'rgba(15,26,46,.28)';
+  g.shadowBlur = 5;
+  g.shadowOffsetY = 1.5;
+  g.fillStyle = '#ffffff';
+  rr(g, 0, 0, W - P * 2, H, H * 0.18);
+  g.fill();
+  g.shadowColor = 'transparent';
+  g.fillStyle = dot;
+  rr(g, 0, 0, H * 0.2, H, H * 0.1);
+  g.fill();
+  g.textBaseline = 'middle';
+  g.fillStyle = '#0f1a2e';
+  g.font = `700 ${fT}px Plus Jakarta Sans, sans-serif`;
+  g.fillText(txt, H * 0.5, H / 2 + 0.5);
+  if (sub) {
+    const sx = H * 0.5 + tw + H * 0.3;
+    g.fillStyle = '#dbe2ec';
+    g.fillRect(sx - H * 0.16, H * 0.24, 1, H * 0.52);
+    g.fillStyle = dot;
+    g.font = `600 ${fS}px JetBrains Mono, monospace`;
+    g.fillText(sub, sx, H / 2 + 0.5);
+  }
+  return (t.img = c);
+}
+function placeTag(t, p, px = 24, dy = 0) {
+  const h = Math.max(22, px);
+  if (h !== t.h) {
+    t.h = h;
+    t.img = null;
+  }
+  _tp.copy(p).project(camera);
+  t.on = _tp.z < 1 && Math.abs(_tp.x) < 1.1 && Math.abs(_tp.y) < 1.1;
+  t.x = ((_tp.x + 1) / 2) * host.clientWidth;
+  t.y = ((1 - _tp.y) / 2) * host.clientHeight;
+  t.dy = dy;
+  t.at = NOW;
+  t.userData.a +=
+    ((t.on ? t.userData.want : 0) - t.userData.a) *
+    (TAG_SNAP ? 1 : 1 - Math.exp(-_dt * 8));
+  t.visible = t.userData.a > 0.02;
+}
+let TAG_SNAP = 0;
+// after each render: every tag placed this frame, in the order they were made
+function drawTags() {
+  const d = devicePixelRatio || 1,
+    W = Math.round(host.clientWidth * d),
+    H = Math.round(host.clientHeight * d);
+  if (tagCv.width !== W || tagCv.height !== H) {
+    tagCv.width = W;
+    tagCv.height = H;
+  }
+  if (d !== TDPR) {
+    TDPR = d;
+    TAGS.forEach((t) => (t.img = null));
+  }
+  tg.setTransform(1, 0, 0, 1, 0, 0);
+  tg.clearRect(0, 0, W, H);
+  const placed = [],
+    gx = Math.round(4 * d),
+    gy = Math.round(3 * d);
+  for (const t of TAGS) {
+    if (!t.visible || t.at !== NOW || !t.userData.args) continue;
+    const img = t.img || tagImage(t),
+      w = img.width,
+      h = img.height,
+      al = t.userData.args[3];
+    let x = clamp(
+        Math.round(t.x * d - (al < 0 ? 0 : al > 0 ? w : w / 2)),
+        Math.round(8 * d),
+        W - w - Math.round(8 * d),
+      ),
+      y = Math.round(t.y * d - h / 2 - t.dy * h);
+    for (let k = 0; k < 4; k++) {
+      const r = placed.find(
+        (r) =>
+          x < r.x + r.w + gx &&
+          x + w + gx > r.x &&
+          y < r.y + r.h + gy &&
+          y + h + gy > r.y,
+      );
+      if (!r) break;
+      y = r.y + r.h + gy;
+    }
+    placed.push({ x, y, w, h });
+    tg.globalAlpha = Math.min(1, t.userData.a);
+    tg.drawImage(img, x, y);
+  }
+  tg.globalAlpha = 1;
+}
+const _tp = new THREE.Vector3();
+let showTags = true;
+
 // ======================================================================= the model: a kinematic bicycle. The car turns about one point on the line of its back axle, R = wheelbase / tan(steer).
 // G metres, y up, origin on the asphalt. A pose is the back axle's centre (x, z) and the heading th: forward is (cos th, -sin th), the right side is (sin th, cos th).
 // steer runs -1..1 (+1 full lock right). The road wheels' angle is steer × 35°; the steering wheel turns 15.2 times as far (1.48 turns to full lock).
@@ -5136,6 +5535,920 @@ function wheelWords(st) {
   };
 }
 
+// ======================================================================= the explanation over the scene: the tracks, the turning point and its arcs, the step's target, the cues, the sensors
+const T_ = {};
+for (const k of [
+  'icr',
+  'nose',
+  'cut',
+  'cue',
+  'cue2',
+  'cue3',
+  'gapF',
+  'gapB',
+  'kerb',
+  'done',
+  'sensF',
+  'sensB',
+  'start',
+])
+  T_[k] = tag();
+// stroke colours (drawn with normal blending at uLightK): C_T the rear's / the path's blue, C_P the nose's orange, then red, white, green, grey
+const C_T = new THREE.Color(0.16, 0.42, 1.62),
+  C_P = new THREE.Color(1.62, 0.78, 0.02),
+  C_R = new THREE.Color(1.55, 0.2, 0.24),
+  C_W = new THREE.Color(1.55, 1.58, 1.61),
+  C_G = new THREE.Color(0.12, 1.15, 0.48),
+  C_DIM = new THREE.Color(0.8, 0.84, 0.9);
+const _a = new THREE.Vector3(),
+  _b = new THREE.Vector3(),
+  _cc = new THREE.Vector3(),
+  _d = new THREE.Vector3(),
+  _pts = [],
+  _pool = Array.from({ length: 400 }, () => new THREE.Vector3());
+const gw = (v, x, y, z) => v.set(x, y, z).applyMatrix4(G.matrixWorld); // G (metres) to world, tilted with it on the hill
+const gv = (v, p) => v.copy(p).applyMatrix4(G.matrixWorld);
+const GY = 0.03; // overlays on the ground float 3 cm over it
+const _ar = [
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+  new THREE.Vector3(),
+];
+function arrowR(a, b, px, c, al = 1) {
+  const A = _ar[0].copy(a),
+    B = _ar[1].copy(b),
+    D = _ar[2].subVectors(B, A),
+    L = D.length();
+  rays.line([A, B], px, c, () => al);
+  if (L < 1e-4) return;
+  D.multiplyScalar(1 / L);
+  const S = _ar[3]
+      .subVectors(camera.position, B)
+      .normalize()
+      .cross(D)
+      .normalize(),
+    s = Math.min(L * 0.4, pxW(B, 10));
+  for (const sg of [-1, 1]) {
+    _ar[4]
+      .copy(B)
+      .addScaledVector(D, -s)
+      .addScaledVector(S, sg * s * 0.6);
+    rays.line([B, _ar[4]], px, c, () => al);
+  }
+}
+// a chevron lying on the ground at (x,z) pointing along dir (a G heading: forward (cos, -sin)), size s metres: tip first, so it leads the way it moves
+function chevron(x, z, th, s, px, c, al) {
+  const f = [Math.cos(th), -Math.sin(th)],
+    r = [Math.sin(th), Math.cos(th)];
+  gw(_a, x + f[0] * s * 0.5, GY, z + f[1] * s * 0.5);
+  gw(
+    _b,
+    x - f[0] * s * 0.5 + r[0] * s * 0.6,
+    GY,
+    z - f[1] * s * 0.5 + r[1] * s * 0.6,
+  );
+  gw(
+    _cc,
+    x - f[0] * s * 0.5 - r[0] * s * 0.6,
+    GY,
+    z - f[1] * s * 0.5 - r[1] * s * 0.6,
+  );
+  rays.line([_b, _a, _cc], px, c, () => al);
+}
+// a polyline on the ground through G points [[x,z],…]
+let _pi = 0;
+const P3 = (x, z, y = GY) => gw(_pool[_pi++ % _pool.length], x, y, z);
+function groundLine(pts, px, c, fa, closed) {
+  _pts.length = 0;
+  for (const q of pts) _pts.push(P3(q[0], q[1]));
+  if (closed && pts.length) _pts.push(P3(pts[0][0], pts[0][1]));
+  rays.line(_pts, px, c, fa);
+}
+function groundArc(cx, cz, r, a0, a1, px, c, fa, n = 40) {
+  _pts.length = 0;
+  for (let i = 0; i <= n; i++) {
+    const a = lerp(a0, a1, i / n);
+    _pts.push(P3(cx + Math.cos(a) * r, cz + Math.sin(a) * r));
+  }
+  rays.line(_pts, px, c, fa);
+}
+function want(t, on) {
+  t.userData.want = on && showTags ? 1 : 0;
+}
+// a label at a point in G (metres); while it is off it keeps fading where it last was
+function tagAt(t, on, x, y, z, txt, sub, dot, dy = 0) {
+  want(t, on);
+  if (!on && t.lp) {
+    placeTag(t, t.lp, 24, t.ldy);
+    return;
+  }
+  if (txt !== undefined) t.userData.set(txt, sub, dot);
+  t.lp ??= new THREE.Vector3();
+  gw(t.lp, x, y, z);
+  t.ldy = dy;
+  placeTag(t, t.lp, 24, dy);
+}
+function hideTag(t) {
+  want(t, false);
+  if (t.lp) placeTag(t, t.lp, 24, t.ldy);
+}
+// the turning point of a pose: on the line of the back axle, R out to the side the wheel is turned to
+function icrOf(p, out) {
+  const side = Math.sign(p.st),
+    R = turnR(p.st);
+  const q = toG(p, 0, side * R);
+  out[0] = q[0];
+  out[1] = q[1];
+  return R;
+}
+const _icr = [0, 0];
+// the outline of the car at a pose, on the ground
+function footprint(p, px, c, al) {
+  const poly = carPoly(p);
+  groundLine(poly, px, c, () => al, true);
+}
+// the tracks the four tyres have left from the start of the manoeuvre to now (front cyan, back amber), faded with distance behind
+function tracks(P, iNow, al, i0 = 0) {
+  if (iNow - i0 < 2) return;
+  const step = 8;
+  for (let w = 0; w < 4; w++) {
+    const [a, b] = [
+        [0, -CARD.tw],
+        [0, CARD.tw],
+        [CARD.L, -CARD.tw],
+        [CARD.L, CARD.tw],
+      ][w],
+      c = w < 2 ? C_P : C_T;
+    _pts.length = 0;
+    for (let i = i0; i <= iNow; i += step) {
+      const q = toG(P.S[i], a, b);
+      _pts.push(P3(q[0], q[1], 0.012));
+    }
+    const q = toG(P.S[iNow], a, b);
+    _pts.push(P3(q[0], q[1], 0.012));
+    rays.line(_pts, 1.4, c, (t) => al * (0.06 + 0.3 * t));
+  }
+}
+let showTracks = true;
+// ---- the turning point, the radius to each wheel, and the arcs the nose and the back sweep while the wheel stays where it is
+function turning(p, ahead, al, labels) {
+  if (Math.abs(p.st) < 0.03) {
+    hideTag(T_.icr);
+    hideTag(T_.nose);
+    hideTag(T_.cut);
+    return;
+  }
+  const R = icrOf(p, _icr),
+    side = Math.sign(p.st),
+    [ix, iz] = _icr;
+  // the point itself: a ring and a dot on the ground, a pin standing up from it (it often falls inside a parked car), and the back axle's line out to it
+  groundArc(ix, iz, 0.24, 0, Math.PI * 2, 2.4, C_T, () => al, 28);
+  groundArc(ix, iz, 0.07, 0, Math.PI * 2, 3, C_T, () => al, 14);
+  gw(_a, ix, 0, iz);
+  gw(_b, ix, 1.75, iz);
+  rays.line([_a, _b], 2.2, C_T, (t) => al * (0.95 - 0.45 * t));
+  _pts.length = 0;
+  for (let i = 0; i <= 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    _pts.push(P3(ix + Math.cos(a) * 0.18, iz + Math.sin(a) * 0.18, 1.75));
+  }
+  rays.line(_pts, 2.2, C_T, () => al * 0.7);
+  const ra = toG(p, 0, side * CARD.tw);
+  for (let i = 0; i < 10; i++) {
+    const u0 = i / 10,
+      u1 = u0 + 0.055;
+    groundLine(
+      [
+        [lerp(ra[0], ix, u0), lerp(ra[1], iz, u0)],
+        [lerp(ra[0], ix, u1), lerp(ra[1], iz, u1)],
+      ],
+      1.6,
+      C_W,
+      () => al * 0.6,
+    );
+  }
+  if (VW === 'top')
+    for (const [a, b] of [
+      [CARD.L, -CARD.tw],
+      [CARD.L, CARD.tw],
+    ]) {
+      const q = toG(p, a, b);
+      groundLine([[ix, iz], q], 1.1, C_W, () => al * 0.35);
+    }
+  // the arcs: where the outside front corner (the nose) and the inside back wheel go next, chevrons along them leading the way they move.
+  // dir +1 forwards; ahead: radians of turn still to come in this step
+  const rot = -side * (p.dir || 1),
+    sweep = clamp(ahead, 0.55, 1.6);
+  const nose = toG(p, CARD.fb - 0.06, -side * (CARD.hw - 0.12)),
+    back = toG(p, 0, side * (CARD.tw + 0.1));
+  const arcOf = (q, c, px, fa) => {
+    const r = Math.hypot(q[0] - ix, q[1] - iz),
+      a0 = Math.atan2(q[1] - iz, q[0] - ix),
+      a1 = a0 + rot * sweep;
+    groundArc(ix, iz, r, a0, a1, px, c, fa, 48);
+    const n = Math.floor((r * sweep) / 1.1);
+    for (let i = 1; i <= n; i++) {
+      const a = a0 + (rot * i * 1.1) / r,
+        tx = -Math.sin(a) * rot,
+        tz = Math.cos(a) * rot;
+      chevron(
+        ix + Math.cos(a) * r,
+        iz + Math.sin(a) * r,
+        Math.atan2(-tz, tx),
+        0.28,
+        2.4,
+        c,
+        al * fa((i * 1.1) / (r * sweep)),
+      );
+    }
+    return [r, a0];
+  };
+  const [rn, an] = arcOf(nose, C_P, 4, (t) => al * (1 - t * 0.7)),
+    [rb, ab] = arcOf(back, C_T, 4, (t) => al * (1 - t * 0.7));
+  if (labels) {
+    tagAt(
+      T_.icr,
+      true,
+      ix,
+      1.95,
+      iz,
+      'Pivot',
+      `${m1(R)} m out`,
+      '#2563ff',
+    );
+    const am = an + rot * sweep * 0.6,
+      ab2 = ab + rot * sweep * 0.6;
+    tagAt(
+      T_.nose,
+      labels > 1,
+      ix + Math.cos(am) * rn,
+      0.08,
+      iz + Math.sin(am) * rn,
+      'Front swings wide',
+      '',
+      '#f08c00',
+    );
+    tagAt(
+      T_.cut,
+      labels > 1,
+      ix + Math.cos(ab2) * rb,
+      0.08,
+      iz + Math.sin(ab2) * rb,
+      p.dir < 0 ? 'Rear tucks in' : 'Rear cuts inside',
+      '',
+      '#2563ff',
+    );
+  } else {
+    hideTag(T_.icr);
+    hideTag(T_.nose);
+    hideTag(T_.cut);
+  }
+}
+// ---- the steering wheel, held up over the driver's seat and turned as the driver turns it (seen from the seat: clockwise is right),
+// with an arrow round it the way it is about to be turned. It faces the camera, so it always reads as a wheel.
+const _wr = new THREE.Vector3(),
+  _wu = new THREE.Vector3(),
+  _wc = new THREE.Vector3();
+function wheelHud(p, target, al) {
+  const seat = VW === 'seat';
+  // from the seat the cabin's own wheel is there to turn: only the arrow round it is drawn
+  if (seat) {
+    const R = LEARNER.cabin.rim;
+    R.updateWorldMatrix(true, false);
+    R.getWorldPosition(_wc);
+  } else {
+    const c = toG(p, CARD.L - 1.62, -0.37);
+    gw(_wc, c[0], 2.2, c[1]);
+  }
+  _wr.setFromMatrixColumn(camera.matrixWorld, 0);
+  _wu.setFromMatrixColumn(camera.matrixWorld, 1);
+  const r = (seat ? 0.2 : 0.3) * U,
+    rot = DS(p.st) * LOCK_TURNS * Math.PI * 2;
+  const at = (a, rr, o) =>
+    o
+      .copy(_wc)
+      .addScaledVector(_wr, Math.sin(a) * rr)
+      .addScaledVector(_wu, Math.cos(a) * rr);
+  if (!seat) {
+    _pts.length = 0;
+    for (let i = 0; i <= 40; i++)
+      _pts.push(at((i / 40) * Math.PI * 2, r, _pool[_pi++ % _pool.length]));
+    rays.line(_pts, 2.6, C_W, () => al * 0.9);
+    for (const sa of [Math.PI / 2, -Math.PI / 2, Math.PI]) {
+      _pts.length = 0;
+      _pts.push(
+        at(rot + sa, r * 0.28, _pool[_pi++ % _pool.length]),
+        at(rot + sa, r, _pool[_pi++ % _pool.length]),
+      );
+      rays.line(_pts, 2.4, C_W, () => al * 0.8);
+    }
+    _pts.length = 0;
+    for (let i = 0; i <= 14; i++)
+      _pts.push(
+        at((i / 14) * Math.PI * 2, r * 0.24, _pool[_pi++ % _pool.length]),
+      );
+    rays.line(_pts, 2, C_W, () => al * 0.7);
+    // the mark at the top of the rim: where "straight ahead" has gone
+    _pts.length = 0;
+    for (let i = 0; i <= 8; i++)
+      _pts.push(at(rot + (i / 8 - 0.5) * 0.34, r, _pool[_pi++ % _pool.length]));
+    rays.line(_pts, 5, C_P, () => al);
+  }
+  // the turn still to make: an arc outside the rim from where the wheel is to where this step takes it, its head leading
+  if (target !== null && Math.abs(target - p.st) > 0.03) {
+    const t1 = DS(target) * LOCK_TURNS * Math.PI * 2,
+      span = clamp(t1 - rot, -Math.PI * 1.6, Math.PI * 1.6),
+      c2 = t1 > rot ? C_T : C_P;
+    _pts.length = 0;
+    for (let i = 0; i <= 24; i++)
+      _pts.push(
+        at(rot + (span * i) / 24, r * 1.32, _pool[_pi++ % _pool.length]),
+      );
+    rays.line(_pts, 3, c2, (t) => al * (0.4 + 0.6 * t));
+    const e = _pool[_pi++ % _pool.length];
+    at(rot + span, r * 1.32, e);
+    const b1 = at(
+        rot + span - Math.sign(span) * 0.32,
+        r * 1.12,
+        _pool[_pi++ % _pool.length],
+      ),
+      b2 = at(
+        rot + span - Math.sign(span) * 0.32,
+        r * 1.52,
+        _pool[_pi++ % _pool.length],
+      );
+    rays.line([b1, e, b2], 3, c2, () => al);
+  }
+}
+// ---- the path still to drive in this step: the back axle's line, dashed by chevrons that point the way the car moves, and the car's outline where the step ends
+function stepAhead(P, iNow, iEnd, al) {
+  if (iEnd - iNow < 8) return;
+  const e = P.S[iEnd];
+  for (let i = iNow + 12; i < iEnd - 6; i += 24) {
+    const q = P.S[i],
+      c = toG(q, CARD.L / 2, 0),
+      th = q.dir < 0 ? q.th + Math.PI : q.th;
+    chevron(c[0], c[1], th, 0.34, 2, C_T, al * 0.8);
+  }
+  footprint(e, 2, C_T, al * 0.85);
+}
+// ---- the parking sensors: the nearest thing behind (or ahead), its distance, as arcs that close in and redden the nearer it is
+const SENS = { front: 9, back: 9, fp: null, bp: null };
+function sensors(p, set, draw) {
+  const s = SETS[set],
+    poly = carPoly(p);
+  SENS.front = SENS.back = 9;
+  SENS.fp = SENS.bp = null;
+  for (const o of s.polys) {
+    const [d, a, b] = nearest(poly, o);
+    const rel = (a[0] - p.x) * Math.cos(p.th) - (a[1] - p.z) * Math.sin(p.th); // along the car from its back axle
+    if (rel > CARD.L * 0.6) {
+      if (d < SENS.front) {
+        SENS.front = d;
+        SENS.fp = a;
+      }
+    } else if (rel < CARD.L * 0.4) {
+      if (d < SENS.back) {
+        SENS.back = d;
+        SENS.bp = a;
+      }
+    }
+  }
+  for (const kz of s.kerbs) {
+    for (const [a, end] of [
+      [-CARD.ro, 'back'],
+      [CARD.fb, 'front'],
+    ])
+      for (const b of [-0.6, 0, 0.6]) {
+        const q = toG(p, a, b),
+          d = q[1] - kz;
+        if (d < SENS[end]) {
+          SENS[end] = Math.max(0, d);
+          SENS[end === 'back' ? 'bp' : 'fp'] = [q[0], kz];
+        }
+      }
+  }
+  if (!draw) return;
+  for (const [end, a] of [
+    ['back', -CARD.ro - 0.12],
+    ['front', CARD.fb + 0.12],
+  ]) {
+    const d = SENS[end];
+    if (d > 1.5) continue;
+    const k = 1 - d / 1.5,
+      c = d < 0.3 ? C_R : d < 0.7 ? C_P : C_G,
+      n = d < 0.3 ? 3 : d < 0.7 ? 2 : 1;
+    for (let j = 0; j < n; j++) {
+      const off = a + (end === 'back' ? -1 : 1) * j * 0.14;
+      _pts.length = 0;
+      for (let i = 0; i <= 16; i++) {
+        const b = lerp(-0.7, 0.7, i / 16),
+          q = toG(
+            p,
+            off + (end === 'back' ? -1 : 1) * (0.08 * (1 - (b / 0.75) ** 2)),
+            b,
+          );
+        _pts.push(P3(q[0], q[1], 0.4));
+      }
+      rays.line(_pts, 2.6, c, () => (0.35 + 0.65 * k) * (1 - j * 0.22));
+    }
+  }
+}
+// ---- the cues each step teaches: a reference line, an angle, a gap; drawn in G
+const CUE = {};
+// where each step of a practice run asks the wheel to be
+const WANT = {
+  parallel: [0, 1, 0, -1, 0],
+  rbay: [0, 1, 0, 0],
+  fbay: [0, 1, 0, 0],
+  angle: [0, 1 / LOCK_TURNS, 0, 0],
+  hill: [0, -1, -1, -1],
+};
+function angleArc(p, ref, lab, col, al) {
+  const c = toG(p, CARD.L / 2, 0),
+    r = 1.7,
+    dirA = (t) => Math.atan2(-Math.sin(t), Math.cos(t));
+  const a0 = dirA(ref);
+  let d = dirA(p.th) - a0;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  const a1 = a0 + d;
+  groundArc(c[0], c[1], r, a0, a1, 2.2, col, () => al, 30);
+  groundLine(
+    [
+      [c[0], c[1]],
+      [c[0] + Math.cos(a0) * r * 1.3, c[1] + Math.sin(a0) * r * 1.3],
+    ],
+    1.2,
+    C_W,
+    () => al * 0.6,
+  );
+  groundLine(
+    [
+      [c[0], c[1]],
+      [c[0] + Math.cos(a1) * r * 1.3, c[1] + Math.sin(a1) * r * 1.3],
+    ],
+    1.2,
+    C_W,
+    () => al * 0.6,
+  );
+  const m = (a0 + a1) / 2;
+  tagAt(
+    T_.cue2,
+    true,
+    c[0] + Math.cos(m) * r * 1.3,
+    0.05,
+    c[1] + Math.sin(m) * r * 1.3,
+    lab,
+    `${Math.round(Math.abs(d) / D2R)}°`,
+    '#f08c00',
+  );
+}
+CUE.parallel = (s, u, p, al) => {
+  const fx = -STREET.gap / 2,
+    cz = STREET.pz;
+  if (s === 1) {
+    const rb = toG(p, -CARD.ro, 0);
+    groundLine(
+      [
+        [fx, cz + CARD.hw - 0.1],
+        [fx, rb[1] + CARD.hw * 0.7],
+      ],
+      2.2,
+      C_P,
+      () => al,
+    );
+    tagAt(
+      T_.cue,
+      u > 0.35,
+      fx,
+      0.9,
+      (cz + rb[1]) / 2 + 0.4,
+      'Rear bumpers level',
+      `${cm(Math.abs(rb[0] - fx))} cm to go`.replace(/^0 cm to go$/, 'level'),
+      '#f08c00',
+    );
+    const side = toG(p, 1.3, CARD.hw);
+    tagAt(
+      T_.cue3,
+      u > 0.6,
+      side[0],
+      0.4,
+      (side[1] + cz + CARD.hw) / 2,
+      'One door-width out',
+      `${cm(p.z - CARD.hw - (cz + CARD.hw))} cm`,
+      '#0f1a2e',
+    );
+  } else if (s === 2 || s === 4) {
+    angleArc(p, Math.PI, s === 2 ? 'Pause at 45°' : 'Now parallel', C_P, al);
+    hideTag(T_.cue);
+    hideTag(T_.cue3);
+  } else if (s === 3) {
+    const fl = toG(p, CARD.fb, -CARD.hw * 0.6);
+    groundLine(
+      [
+        [fx, cz + CARD.hw],
+        [fl[0], fl[1]],
+      ],
+      2,
+      C_P,
+      () => al,
+    );
+    tagAt(
+      T_.cue,
+      true,
+      (fx + fl[0]) / 2,
+      0.6,
+      (cz + CARD.hw + fl[1]) / 2,
+      'Till the front clears',
+      `their back bumper`,
+      '#f08c00',
+    );
+    hideTag(T_.cue2);
+  } else if (s === 5) {
+    const e = p;
+    const fb = toG(e, CARD.fb, 0),
+      rb = toG(e, -CARD.ro, 0);
+    groundLine(
+      [
+        [fx, e.z],
+        [fb[0], fb[1]],
+      ],
+      2,
+      C_W,
+      () => al,
+    );
+    groundLine(
+      [
+        [STREET.gap / 2, e.z],
+        [rb[0], rb[1]],
+      ],
+      2,
+      C_W,
+      () => al,
+    );
+    tagAt(
+      T_.gapF,
+      u > 0.5,
+      (fx + fb[0]) / 2,
+      0.5,
+      e.z,
+      'In front',
+      `${m1(fb[0] - fx)} m`,
+      '#0f1a2e',
+    );
+    tagAt(
+      T_.gapB,
+      u > 0.5,
+      (STREET.gap / 2 + rb[0]) / 2,
+      0.5,
+      e.z,
+      'Behind',
+      `${m1(STREET.gap / 2 - rb[0])} m`,
+      '#0f1a2e',
+    );
+    const k = toG(e, 0.6, CARD.hw);
+    groundLine(
+      [
+        [k[0], k[1]],
+        [k[0], STREET.kerb],
+      ],
+      2,
+      C_G,
+      () => al,
+    );
+    tagAt(
+      T_.kerb,
+      u > 0.3,
+      k[0],
+      0.35,
+      (k[1] + STREET.kerb) / 2 - 0.1,
+      'Kerb',
+      `${cm(e.z - CARD.hw - STREET.kerb)} cm`,
+      '#12a150',
+    );
+    hideTag(T_.cue2);
+    hideTag(T_.cue);
+  }
+};
+CUE.rbay = (s, u, p, al) => {
+  if (s === 1) {
+    const lx = -1.25 - 2 * BAY.w,
+      m = toG(p, CARD.mir, 0);
+    groundLine(
+      [
+        [lx, BAY.z],
+        [lx, BAY.z + 1.2],
+      ],
+      3,
+      C_P,
+      () => al,
+    );
+    gw(_a, m[0], 1.02, m[1]);
+    gw(_b, lx, 0.02, BAY.z + 0.5);
+    rays.line([_a, _b], 1.4, C_P, () => al * 0.6);
+    tagAt(
+      T_.cue,
+      u > 0.4,
+      lx,
+      0.9,
+      BAY.z + 0.6,
+      'Mirror at line two',
+      `${cm(Math.abs(m[0] - lx))} cm`,
+      '#f08c00',
+    );
+  } else if (s === 2 || s === 3) {
+    hideTag(T_.cue);
+    const r = toG(p, -CARD.ro, 0);
+    if (r[1] < BAY.z + 0.5) {
+      for (const lx of [-1.25, 1.25]) {
+        groundLine(
+          [
+            [lx, BAY.z],
+            [lx, BAY.z - BAY.d + 0.2],
+          ],
+          2.4,
+          C_T,
+          () => al * 0.8,
+        );
+      }
+      const gl = Math.abs(toG(p, 0, -CARD.hw)[0] - -1.25),
+        gr = Math.abs(1.25 - toG(p, 0, CARD.hw)[0]);
+      tagAt(
+        T_.cue3,
+        s === 3,
+        0,
+        1.6,
+        BAY.z - 1.5,
+        'Even gaps',
+        `${cm(Math.min(gl, gr))} and ${cm(Math.max(gl, gr))} cm`,
+        '#2563ff',
+      );
+    }
+  } else if (s === 4) {
+    const t = toG(p, -CARD.ro, 0),
+      bk = BAY.z - BAY.d;
+    groundLine(
+      [
+        [t[0], t[1]],
+        [t[0], bk],
+      ],
+      2,
+      C_G,
+      () => al,
+    );
+    tagAt(
+      T_.kerb,
+      u > 0.5,
+      t[0] + 0.5,
+      0.3,
+      (t[1] + bk) / 2,
+      'To the kerb',
+      `${cm(t[1] - bk)} cm`,
+      '#12a150',
+    );
+    hideTag(T_.cue3);
+  }
+};
+CUE.fbay = (s, u, p, al) => {
+  if (s === 1) {
+    const z0 = BAY.z,
+      side = toG(p, 1.3, CARD.hw);
+    groundLine(
+      [
+        [side[0], z0],
+        [side[0], side[1]],
+      ],
+      2,
+      C_P,
+      () => al,
+    );
+    tagAt(
+      T_.cue,
+      u > 0.3,
+      side[0],
+      0.5,
+      (z0 + side[1]) / 2,
+      'Set up wide',
+      `${m1(side[1] - z0)} m out`,
+      '#f08c00',
+    );
+  } else if (s === 2) {
+    const fw = toG(p, CARD.L, CARD.tw);
+    groundLine(
+      [
+        [1.25, BAY.z],
+        [1.25, BAY.z + 1.6],
+      ],
+      3,
+      C_P,
+      () => al,
+    );
+    tagAt(
+      T_.cue,
+      u < 0.25,
+      1.25,
+      0.9,
+      BAY.z + 1.2,
+      'Line meets front wheel',
+      'then full lock',
+      '#f08c00',
+    );
+  } else if (s === 4) {
+    const f = toG(p, CARD.fb, 0),
+      bk = BAY.z - BAY.d;
+    groundLine(
+      [
+        [f[0], f[1]],
+        [f[0], bk],
+      ],
+      2,
+      C_G,
+      () => al,
+    );
+    tagAt(
+      T_.kerb,
+      u > 0.4,
+      f[0] + 0.5,
+      0.3,
+      (f[1] + bk) / 2,
+      'To the kerb',
+      `${cm(f[1] - bk)} cm`,
+      '#12a150',
+    );
+    hideTag(T_.cue);
+  }
+};
+function gravityArrow(p, al, lab) {
+  const c = toG(p, CARD.L / 2, 0);
+  gw(_a, c[0] - 1.1, 1.85, c[1]);
+  gw(_b, c[0] + 1.1, 1.85, c[1]);
+  arrowR(_a, _b, 3.6, C_P, al);
+  if (lab)
+    tagAt(
+      T_.cue3,
+      true,
+      c[0] + 1.3,
+      2.05,
+      c[1],
+      'Slope pull',
+      `${((1300 * HILL.pull) / 1000).toFixed(1)} kN down the slope`,
+      '#f08c00',
+    );
+}
+CUE.hill = (s, u, p, al) => {
+  if (s === 1) {
+    const q = toG(p, 1.3, CARD.hw);
+    groundLine(
+      [
+        [q[0], q[1]],
+        [q[0], STREET.kerb],
+      ],
+      2,
+      C_G,
+      () => al,
+    );
+    tagAt(
+      T_.kerb,
+      u > 0.6,
+      q[0],
+      0.45,
+      (q[1] + STREET.kerb) / 2,
+      'Close to the kerb',
+      `${cm(p.z - CARD.hw - STREET.kerb)} cm`,
+      '#12a150',
+    );
+  } else if (s === 2 || s === 3) {
+    const a = wheelAng(p.st, CARD.tw),
+      th = p.th + a,
+      w = toG(p, CARD.L, CARD.tw),
+      f = [Math.cos(th), -Math.sin(th)];
+    gw(_a, w[0], 0.32, w[1]);
+    gw(_b, w[0] + f[0] * 1.1, 0.32, w[1] + f[1] * 1.1);
+    arrowR(_a, _b, 3, C_T, al);
+    tagAt(
+      T_.cue,
+      s === 2 && u > 0.4,
+      w[0] + f[0] * 1.3,
+      0.5,
+      w[1] + f[1] * 1.3,
+      'Wheels turned out',
+      '',
+      '#2563ff',
+    );
+    if (s === 3 && u > 0.92) {
+      const t = toG(p, CARD.L - 0.12, CARD.tw + 0.1);
+      groundArc(
+        t[0],
+        STREET.kerb + 0.02,
+        0.16,
+        0,
+        Math.PI * 2,
+        2.6,
+        C_G,
+        () => al,
+        24,
+      );
+      tagAt(
+        T_.kerb,
+        true,
+        t[0],
+        0.5,
+        STREET.kerb + 0.1,
+        'Tyre against the kerb',
+        'a chock',
+        '#12a150',
+      );
+    }
+    if (s === 3) gravityArrow(p, al, false);
+  } else if (s === 4) {
+    gravityArrow(p, al, true);
+    const t = toG(p, CARD.L - 0.12, CARD.tw + 0.1);
+    groundArc(
+      t[0],
+      STREET.kerb + 0.02,
+      0.16,
+      0,
+      Math.PI * 2,
+      2.6,
+      C_G,
+      () => al,
+      24,
+    );
+    tagAt(
+      T_.kerb,
+      true,
+      t[0],
+      0.5,
+      STREET.kerb + 0.1,
+      'Tyre against the kerb',
+      'if the handbrake slips',
+      '#12a150',
+    );
+    const c = toG(p, 1.3, 0);
+    tagAt(
+      T_.cue,
+      u > 0.3,
+      c[0],
+      1.85,
+      c[1],
+      'Handbrake: on',
+      'first gear, or P',
+      '#0f1a2e',
+    );
+  }
+};
+CUE.angle = (s, u, p, al) => {
+  if (s === 1 || (s === 2 && u < 0.2)) {
+    const lx = ANG.pitch / 2;
+    groundLine(
+      [
+        [lx, ANG.z],
+        [lx + ANG.ax[0] * 1.4, ANG.z + ANG.ax[1] * 1.4],
+      ],
+      3,
+      C_P,
+      () => al,
+    );
+    const f = toG(p, CARD.fb, 0);
+    groundLine(
+      [
+        [f[0], f[1]],
+        [f[0], ANG.z],
+      ],
+      1.4,
+      C_P,
+      () => al * 0.6,
+    );
+    tagAt(
+      T_.cue,
+      u > 0.3,
+      lx,
+      0.9,
+      ANG.z + 0.4,
+      'Bumper meets near line',
+      `${cm(Math.max(0, f[0] - lx))} cm`,
+      '#f08c00',
+    );
+  } else if (s === 4) {
+    const f = toG(p, CARD.fb, 0),
+      a = ANG.ax,
+      d = ANG.d - (f[0] * a[0] + (f[1] - ANG.z) * a[1]);
+    tagAt(
+      T_.kerb,
+      u > 0.4,
+      f[0],
+      0.3,
+      f[1] + 0.3,
+      'To the end',
+      `${cm(d)} cm`,
+      '#12a150',
+    );
+    hideTag(T_.cue);
+  }
+};
+
 // ======================================================================= practice: you drive. Hold forwards or reverse to creep; turn the wheel and it stays where you leave it, as a real one does.
 // The same model moves the car (stepped in 2 cm pieces); a touch stops it where it touched, and the coach watches each step.
 const DRV = {
@@ -5382,6 +6695,761 @@ function parkedness(p) {
   }
   return { ok, info };
 }
+// ---- the coach: each step's instruction, how far along it you are, and when it is done
+const deg = (a) => {
+  let d = Math.atan2(Math.sin(a), Math.cos(a));
+  return d / D2R;
+};
+const COACH = {
+  parallel: [
+    {
+      say: 'Line up beside the front car',
+      hint: 'hold ↑ · stop with your rear bumper level with theirs',
+      prog: (p) =>
+        clamp(
+          (DRV.start.x - p.x) / (DRV.start.x - (-STREET.gap / 2 - CARD.ro)),
+          0,
+          1,
+        ),
+      done: (p) =>
+        Math.abs(p.x - (-STREET.gap / 2 - CARD.ro)) < 0.35 && DRV.stillT > 0.3,
+      bad: (p) =>
+        p.x < -STREET.gap / 2 - CARD.ro - 0.4
+          ? 'Too far. Back up a little (↓)'
+          : '',
+    },
+    {
+      say: 'Wind right to full lock, reverse to 45°',
+      hint: 'hold → until the wheel stops, then hold ↓',
+      prog: (p) => clamp(deg(p.th - Math.PI) / 45, 0, 1),
+      done: (p) => deg(p.th - Math.PI) >= 40,
+      bad: (p) =>
+        DRV.v < 0 && p.st < 0.9 ? 'Turn the wheel all the way right (→)' : '',
+    },
+    {
+      say: 'Unwind, then reverse till your front clears',
+      hint: 'hold ← back to centre, then ↓',
+      prog: (p) =>
+        clamp(
+          1 - (-STREET.gap / 2 + 0.15 - toG(p, CARD.fb, -CARD.hw)[0]) / 2,
+          0,
+          1,
+        ),
+      done: (p) =>
+        toG(p, CARD.fb, -CARD.hw)[0] > -STREET.gap / 2 + 0.15 &&
+        Math.abs(p.st) < 0.15,
+      bad: (p) =>
+        DRV.v < 0 && p.st > 0.3 ? 'Straighten the wheel first (←)' : '',
+    },
+    {
+      say: 'Wind left to full lock, reverse till parallel',
+      hint: 'hold ← until the wheel stops, then ↓',
+      prog: (p) => clamp(1 - deg(p.th - Math.PI) / 45, 0, 1),
+      done: (p) => Math.abs(deg(p.th - Math.PI)) < 3,
+      bad: (p) =>
+        deg(p.th - Math.PI) < -3
+          ? 'Past parallel. Straighten and pull forward'
+          : '',
+    },
+    {
+      say: 'Unwind and roll forward to the middle',
+      hint: '→ back to centre, then a little ↑',
+      prog: (p) => {
+        const k = p.z - CARD.hw - STREET.kerb;
+        return clamp(1 - (k - 0.25) / 1, 0, 1);
+      },
+      done: () => false,
+      bad: (p) => {
+        const k = p.z - CARD.hw - STREET.kerb;
+        return DRV.stillT > 0.8 && Math.abs(deg(p.th - Math.PI)) < 6 && k >= 0.5
+          ? `That’s ${cm(k)} cm from the kerb, too far out. Start again (⇧Z) and reverse a little further before you turn in`
+          : '';
+      },
+    },
+  ],
+  rbay: [
+    {
+      say: 'Roll past, stop with your mirror at line two',
+      hint: 'hold ↑ · the second line past the bay',
+      prog: (p) => clamp((DRV.start.x - p.x) / (DRV.start.x - -4.06), 0, 1),
+      done: (p) =>
+        Math.abs(toG(p, CARD.mir, 0)[0] - (-1.25 - 2 * BAY.w)) < 0.4 &&
+        DRV.stillT > 0.3,
+      bad: (p) =>
+        toG(p, CARD.mir, 0)[0] < -1.25 - 2 * BAY.w - 0.5
+          ? 'Too far. Back up a little (↓)'
+          : '',
+    },
+    {
+      say: 'Wind right to full lock, then reverse',
+      hint: 'hold → until the wheel stops, then ↓',
+      prog: (p) => clamp(deg(p.th - Math.PI) / 90, 0, 1),
+      done: (p) => Math.abs(deg(p.th - 1.5 * Math.PI)) < 8,
+      bad: (p) =>
+        DRV.v < 0 && p.st < 0.9 && deg(p.th - Math.PI) < 45
+          ? 'All the way right (→)'
+          : '',
+    },
+    {
+      say: 'Square now, unwind the wheel',
+      hint: 'hold ← back to centre',
+      prog: (p) => 1 - Math.abs(p.st),
+      done: (p) => Math.abs(p.st) < 0.05,
+    },
+    {
+      say: 'Back straight in',
+      hint: 'hold ↓ · stop short of the kerb',
+      prog: () => 0,
+      done: () => false,
+      bad: (p) => {
+        const q = parkedness(p).info;
+        return DRV.stillT > 0.8 &&
+          q.ang < 8 &&
+          q.inside &&
+          Math.abs(q.off) >= 0.4
+          ? `${cm(Math.abs(q.off))} cm off the middle. Pull out and try again`
+          : '';
+      },
+    },
+  ],
+  fbay: [
+    {
+      say: 'Set up wide, about 2.5 m out',
+      hint: 'hold ↑ · turn when the line passes your front wheel',
+      prog: (p) => clamp((DRV.start.x - p.x) / (DRV.start.x - 4.07), 0, 1),
+      done: (p) => toG(p, CARD.L, 0)[0] < 1.35,
+      bad: (p) =>
+        Math.abs(p.st) > 0.2 ? 'Not yet. Keep straight until the line' : '',
+    },
+    {
+      say: 'Wind right to full lock, creep forward',
+      hint: 'hold → and ↑ · watch the back corner',
+      prog: (p) => clamp(-deg(p.th - Math.PI) / 90, 0, 1),
+      done: (p) => Math.abs(deg(p.th - Math.PI / 2)) < 8,
+    },
+    {
+      say: 'Square now, unwind the wheel',
+      hint: 'hold ← back to centre',
+      prog: (p) => 1 - Math.abs(p.st),
+      done: (p) => Math.abs(p.st) < 0.05,
+    },
+    {
+      say: 'Creep in, stop before the kerb',
+      hint: 'a little ↑',
+      prog: () => 0,
+      done: () => false,
+      bad: (p) => {
+        const q = parkedness(p).info;
+        return DRV.stillT > 0.8 &&
+          q.ang < 8 &&
+          q.inside &&
+          Math.abs(q.off) >= 0.4
+          ? `${cm(Math.abs(q.off))} cm off the middle. Pull out and try again`
+          : '';
+      },
+    },
+  ],
+  hill: [
+    {
+      say: 'Stop close to the kerb, nose uphill',
+      hint: 'hold ↑ · stop about 25 cm from the kerb',
+      prog: (p) => clamp((DRV.start.x - p.x) / DRV.start.x, 0, 1),
+      done: (p) =>
+        DRV.stillT > 0.3 && p.x < 3.5 && p.z - CARD.hw - STREET.kerb < 0.45,
+    },
+    {
+      say: 'Steer away from the kerb',
+      hint: 'hold ← to full lock',
+      prog: (p) => clamp(-p.st, 0, 1),
+      done: (p) => p.st <= -0.95,
+      bad: (p) =>
+        p.st > 0.2 ? 'That’s towards the kerb. Turn the other way (←)' : '',
+    },
+    {
+      say: 'Ease back onto the kerb',
+      hint: 'a touch of ↓, gently',
+      prog: (p) => (DRV.rest ? 1 : clamp((p.th - Math.PI) / (4.5 * D2R), 0, 1)),
+      done: () => !!DRV.rest,
+    },
+    {
+      say: 'Handbrake on, in gear',
+      hint: 'done',
+      prog: () => 1,
+      done: () => false,
+    },
+  ],
+  angle: [
+    {
+      say: 'Run in 1.5 m out',
+      hint: 'hold ↑ · turn when your bumper reaches the near line',
+      prog: (p) => clamp((DRV.start.x - p.x) / (DRV.start.x - 5.163), 0, 1),
+      done: (p) => toG(p, CARD.fb, 0)[0] < ANG.pitch / 2 + 0.15,
+    },
+    {
+      say: 'One turn right, creep forward',
+      hint: '→ about one turn, then ↑',
+      prog: (p) => clamp(-deg(p.th - Math.PI) / 45, 0, 1),
+      done: (p) => Math.abs(deg(p.th - ANG.th)) < 6,
+    },
+    {
+      say: 'Unwind as you line up',
+      hint: 'hold ← back to centre',
+      prog: (p) => 1 - Math.abs(p.st),
+      done: (p) => Math.abs(p.st) < 0.05,
+    },
+    {
+      say: 'Creep in to the end',
+      hint: 'a little ↑',
+      prog: () => 0,
+      done: () => false,
+      bad: (p) => {
+        const q = parkedness(p).info;
+        return DRV.stillT > 0.8 && q.ang < 8 && Math.abs(q.off) >= 0.4
+          ? `${cm(Math.abs(q.off))} cm off the middle. Reverse out and try again`
+          : '';
+      },
+    },
+  ],
+};
+let coachKey = '';
+function coachStep() {
+  const C = COACH[MK],
+    k = clamp(DRV.step, 1, C.length),
+    c = C[k - 1],
+    p = DRV;
+  const pk = parkedness(p);
+  if (pk.ok && DRV.stillT > 0.6 && !DRV.parked) {
+    DRV.parked = {
+      ...pk.info,
+      touches: DRV.touches,
+      moves: DRV.moves + 1,
+      t: NOW - DRV.stepAt,
+    };
+    sfx('done');
+  }
+  if (DRV.parked && !pk.ok) DRV.parked = null;
+  if (!DRV.parked && k < C.length && c.done(p)) {
+    DRV.step = k + 1;
+    sfx('step');
+  }
+}
+function coachSync(force) {
+  const C = COACH[MK],
+    k = clamp(DRV.step, 1, C.length),
+    c = C[k - 1],
+    p = DRV,
+    el = $('#coach');
+  let t,
+    s,
+    pr,
+    cls = '';
+  if (DRV.parked) {
+    const P = DRV.parked,
+      good = P.touches === 0;
+    t = good ? 'Parked' : 'Parked, with a touch';
+    cls = good ? 'ok' : 'bad';
+    pr = 1;
+    s =
+      MK === 'hill'
+        ? `the front tyre rests on the kerb · ${cm(P.kerb)} cm out`
+        : MK === 'parallel'
+          ? `${cm(P.kerb)} cm from the kerb · ${P.ang.toFixed(0)}° · ${P.moves} move${P.moves > 1 ? 's' : ''}`
+          : `${P.ang.toFixed(0)}° off square · ${cm(Math.abs(P.off))} cm off centre · ${P.moves} move${P.moves > 1 ? 's' : ''}`;
+    if (P.touches) s += ` · ${P.touches} touch${P.touches > 1 ? 'es' : ''}`;
+  } else if (DRV.bump) {
+    t =
+      DRV.bump.kind === 'kerb'
+        ? 'Touched the kerb'
+        : DRV.bump.kind === 'edge'
+          ? 'Off the edge'
+          : 'Bump. You touched a car';
+    s = 'back away the other way';
+    cls = 'bad';
+    pr = c.prog(p);
+  } else {
+    const b = c.bad ? c.bad(p) : '';
+    t = `${k}. ${c.say}`;
+    s = b || c.hint;
+    cls = b ? 'bad' : '';
+    pr = c.prog(p);
+  }
+  const key = t + s + cls + ((pr * 50) | 0) + LHT;
+  if (!force && key === coachKey) return;
+  coachKey = key;
+  $('#co-t').textContent = LR(t);
+  $('#co-s').textContent = LR(s);
+  $('#co-bar').style.width = (clamp(pr, 0, 1) * 100).toFixed(1) + '%';
+  el.classList.toggle('ok', cls === 'ok');
+  el.classList.toggle('bad', cls === 'bad');
+}
+
+// ======================================================================= sound: off until asked for (the speaker, or M), remembered. Web Audio only: the sensors' beeps, the indicator's tick, a bump
+let AC = null,
+  SND = false;
+try {
+  SND = localStorage.getItem('parking-sound') === '1';
+} catch {}
+function sfxInit() {
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+  } catch {
+    AC = null;
+  }
+}
+function tone(f, d, type = 'sine', g = 0.08, at = 0) {
+  if (!AC || !SND) return;
+  const t = AC.currentTime + at,
+    o = AC.createOscillator(),
+    v = AC.createGain();
+  o.type = type;
+  o.frequency.value = f;
+  v.gain.setValueAtTime(0, t);
+  v.gain.linearRampToValueAtTime(g, t + 0.005);
+  v.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(v).connect(AC.destination);
+  o.start(t);
+  o.stop(t + d + 0.02);
+}
+function sfx(k) {
+  if (!AC || !SND) return;
+  if (k === 'beep') tone(1850, 0.07, 'sine', 0.05);
+  else if (k === 'tone') tone(1850, 0.2, 'sine', 0.04);
+  else if (k === 'tick') tone(2600, 0.02, 'square', 0.012);
+  else if (k === 'tock') tone(1900, 0.025, 'square', 0.01);
+  else if (k === 'bump') {
+    tone(70, 0.25, 'sine', 0.25);
+    tone(140, 0.12, 'triangle', 0.08);
+  } else if (k === 'step') {
+    tone(880, 0.09, 'sine', 0.05);
+    tone(1320, 0.12, 'sine', 0.04, 0.08);
+  } else if (k === 'done') {
+    tone(660, 0.12, 'sine', 0.06);
+    tone(880, 0.12, 'sine', 0.06, 0.1);
+    tone(1320, 0.25, 'sine', 0.05, 0.2);
+  }
+}
+function setSound(on) {
+  SND = on;
+  if (on) {
+    sfxInit();
+    AC?.resume?.();
+  }
+  try {
+    localStorage.setItem('parking-sound', on ? '1' : '0');
+  } catch {}
+  $('#snd').classList.toggle('on', on);
+  $('#snd').setAttribute('aria-pressed', on);
+  $('#snd-ic').innerHTML = on
+    ? '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'
+    : '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>';
+}
+// the sensors beep faster the closer the nearest thing is, while the car moves that way; the indicator ticks while it flashes
+let beepAt = 0,
+  tickOn = false;
+function soundTick(moving, dir) {
+  if (!SND || !AC) return;
+  const d = dir < 0 ? SENS.back : dir > 0 ? SENS.front : 9;
+  if (moving && d < 1.5) {
+    const gap = d < 0.3 ? 0 : lerp(0.12, 0.8, (d - 0.3) / 1.2);
+    if (gap === 0) {
+      if (NOW - beepAt > 0.22) {
+        sfx('tone');
+        beepAt = NOW;
+      }
+    } else if (NOW - beepAt > gap) {
+      sfx('beep');
+      beepAt = NOW;
+    }
+  }
+  const on = LIVE.sig && (NOW * 1.5) % 1 < 0.5;
+  if (on !== tickOn && LIVE.sig) {
+    sfx(on ? 'tick' : 'tock');
+  }
+  tickOn = on;
+}
+
+// ======================================================================= the wall's three panels: the turning point; the whole manoeuvre from above; the wheel, step by step
+const C_CY = '#1747d1',
+  C_AM = '#f08c00',
+  C_CO = '#e5484d',
+  C_DM = '#6f7c96',
+  C_GR = '#12a150';
+const panelText = (g, t, x, y, size, col = C_CY, al = 'left', w = 600) => {
+  g.font = `${w} ${size}px Plus Jakarta Sans, sans-serif`;
+  g.fillStyle = col;
+  g.textAlign = al;
+  g.textBaseline = 'alphabetic';
+  g.fillText(LR(t), x, y);
+};
+const monoText = (g, t, x, y, size, col = C_CY, al = 'left') => {
+  g.font = `500 ${size}px JetBrains Mono, monospace`;
+  g.fillStyle = col;
+  g.textAlign = al;
+  g.textBaseline = 'alphabetic';
+  g.fillText(LR(t), x, y);
+};
+function poly2(g, pts, map, close = true) {
+  g.beginPath();
+  pts.forEach((q, i) => {
+    const [x, y] = map(q);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  if (close) g.closePath();
+}
+// a car seen from above at the origin, facing up the panel, its front wheels turned; the turning point and the arcs of the nose and the back wheel
+function drawPivot(g, w, h) {
+  const st = CUR.st,
+    s = 44,
+    cx = w * 0.36,
+    cy = h * 0.6; // 1 m = s px; the car's back axle at (cx, cy), facing up (forward = -y)
+  panelText(g, 'PIVOT POINT · LIVE', 36, 56, 28, C_CY, 'left', 700);
+  const mp = ([a, b]) => [cx + b * s * MS(), cy - a * s];
+  g.strokeStyle = C_CY;
+  g.lineWidth = 4;
+  poly2(g, PLAN_P, mp);
+  g.stroke();
+  for (const [a, b, f] of [
+    [0, -CARD.tw, 0],
+    [0, CARD.tw, 0],
+    [CARD.L, -CARD.tw, 1],
+    [CARD.L, CARD.tw, 1],
+  ]) {
+    const ang = f ? wheelAng(st, b) : 0,
+      c = Math.cos(ang),
+      sn = Math.sin(ang);
+    g.save();
+    g.translate(...mp([a, b]));
+    g.rotate(-ang * MS());
+    g.fillStyle = f ? C_CY : '#9aa5ba';
+    g.fillRect(-0.1025 * s, -0.316 * s, 0.205 * s, 0.632 * s);
+    g.restore();
+  }
+  if (Math.abs(st) > 0.03) {
+    const side = Math.sign(st),
+      R = turnR(st),
+      [ix, iy] = mp([0, side * R]);
+    g.setLineDash([10, 8]);
+    g.strokeStyle = C_DM;
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(...mp([0, 0]));
+    g.lineTo(ix, iy);
+    for (const b of [-CARD.tw, CARD.tw]) {
+      g.moveTo(ix, iy);
+      g.lineTo(...mp([CARD.L, b]));
+    }
+    g.stroke();
+    g.setLineDash([]);
+    const nose = mp([CARD.fb, -side * CARD.hw]),
+      back = mp([0, side * CARD.tw]);
+    for (const [q, col] of [
+      [nose, C_AM],
+      [back, C_CY],
+    ]) {
+      const r = Math.hypot(q[0] - ix, q[1] - iy),
+        a0 = Math.atan2(q[1] - iy, q[0] - ix);
+      const sd = side * MS();
+      g.strokeStyle = col;
+      g.lineWidth = 5;
+      g.beginPath();
+      g.arc(ix, iy, r, a0, a0 + sd * 0.9, sd < 0);
+      g.stroke();
+    }
+    g.fillStyle = C_AM;
+    g.beginPath();
+    g.arc(ix, iy, 11, 0, 7);
+    g.fill();
+    monoText(g, `${m1(R)} m`, (ix + cx) / 2, iy - 14, 26, '#0f1a2e', 'center');
+  }
+  const tx = w * 0.66;
+  const rows = [
+    [
+      'Steering wheel',
+      st ? turnsText(st) + (st > 0 ? ' right' : ' left') : 'centred',
+    ],
+    ['Front wheels', `${Math.round((Math.abs(st) * CARD.dMax) / D2R)}°`],
+    [
+      'Turning point',
+      Math.abs(st) > 0.03 ? `${m1(turnR(st))} m out` : 'none (straight)',
+    ],
+    [
+      'Turning circle',
+      `${m1(2 * Math.hypot(R_MIN + CARD.tw, CARD.L))} m at full lock`,
+    ],
+  ];
+  rows.forEach(([a, b], i) => {
+    const y = 118 + i * 52;
+    panelText(g, a, tx, y, 22, C_DM, 'left', 500);
+    monoText(g, b, tx, y + 26, 26, '#0f1a2e');
+  });
+  panelText(
+    g,
+    'Orange: the front corner’s path · Blue: the rear wheel’s path',
+    36,
+    h - 30,
+    21,
+    C_DM,
+    'left',
+    500,
+  );
+}
+// the manoeuvre from above: the parked cars, the kerb or the lines, the path, the car where it is, each step's end numbered
+function drawPlan(g, w, h) {
+  const m = man(),
+    P = path(),
+    s = 34,
+    cx = w * 0.5,
+    cy = h * 0.56;
+  const mp = ([x, z]) => [cx + x * s * MS(), cy + (z - PLAN_CZ[MK]) * s];
+  panelText(
+    g,
+    m.long.toUpperCase() + (WRONG ? ' · CLASSIC MISTAKE' : ''),
+    36,
+    56,
+    28,
+    WRONG ? C_CO : C_CY,
+    'left',
+    700,
+  );
+  g.strokeStyle = C_DM;
+  g.lineWidth = 3;
+  if (m.set === 'street' || m.set === 'hill') {
+    g.beginPath();
+    g.moveTo(...mp([-11, STREET.kerb]));
+    g.lineTo(...mp([11, STREET.kerb]));
+    g.stroke();
+  } else if (m.set === 'angle') {
+    for (let k = -3; k <= 3; k++) {
+      const x = (k + 0.5) * ANG.pitch;
+      g.beginPath();
+      g.moveTo(...mp([x, ANG.z]));
+      g.lineTo(...mp([x + ANG.ax[0] * ANG.d, ANG.z + ANG.ax[1] * ANG.d]));
+      g.stroke();
+    }
+  } else
+    for (let k = -4; k <= 4; k++) {
+      const x = (k - 0.5) * BAY.w;
+      g.beginPath();
+      g.moveTo(...mp([x, BAY.z]));
+      g.lineTo(...mp([x, BAY.z - BAY.d]));
+      g.stroke();
+    }
+  g.fillStyle = '#6f7c9622';
+  g.strokeStyle = C_DM;
+  g.lineWidth = 2;
+  for (const o of SETS[m.set].polys) {
+    poly2(g, o, mp);
+    g.fill();
+    g.stroke();
+  }
+  g.strokeStyle = WRONG ? C_CO : C_CY;
+  g.globalAlpha = 0.45;
+  g.lineWidth = 3;
+  g.beginPath();
+  for (let i = 0; i < P.n; i += 10) {
+    const [x, y] = mp([P.S[i].x, P.S[i].z]);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  }
+  g.stroke();
+  g.globalAlpha = 1;
+  for (let k = 1; k < P.ends.length; k++) {
+    const e = P.S[Math.min(P.ends[k], P.n - 1)],
+      [x, y] = mp([e.x, e.z]),
+      on = (MODE === 'drive' ? DRV.step : stepNow()) === k;
+    g.fillStyle = on ? C_AM : '#ffffff';
+    g.strokeStyle = on ? C_AM : C_CY;
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(x, y, 15, 0, 7);
+    g.fill();
+    g.stroke();
+    monoText(g, String(k), x, y + 8, 20, on ? '#ffffff' : '#0f1a2e', 'center');
+  }
+  g.strokeStyle = C_AM;
+  g.lineWidth = 5;
+  poly2(g, carPoly(CUR), mp);
+  g.stroke();
+  if (WRONG && PATHS[MK].hit && TT >= path().ends.length - 1.02) {
+    const [x, y] = mp(PATHS[MK].hit.at);
+    g.strokeStyle = C_CO;
+    g.lineWidth = 6;
+    g.beginPath();
+    g.moveTo(x - 14, y - 14);
+    g.lineTo(x + 14, y + 14);
+    g.moveTo(x + 14, y - 14);
+    g.lineTo(x - 14, y + 14);
+    g.stroke();
+  }
+}
+const PLAN_CZ = { parallel: -1, rbay: -1.5, fbay: -1.5, angle: -1.2, hill: -1 };
+// the wheel, step by step: where each step turns it to
+function drawWheel(g, w, h) {
+  const m = man(),
+    n = m.steps.length;
+  panelText(
+    g,
+    'WHEEL POSITIONS · EACH STEP',
+    36,
+    56,
+    28,
+    C_CY,
+    'left',
+    700,
+  );
+  const P = PATHS[MK].norm;
+  const gap = (w - 72) / n;
+  for (let k = 1; k <= n; k++) {
+    const e = P.S[P.ends[k]],
+      st =
+        Math.abs(e.st) < 0.02 && k < n
+          ? P.S[Math.max(P.ends[k] - 1, 0)].st
+          : e.st,
+      x = 36 + gap * (k - 0.5),
+      y = h * 0.5,
+      R = Math.min(48, gap * 0.32),
+      on = (MODE === 'drive' ? DRV.step : stepNow()) === k && !WRONG;
+    const stE = e.st;
+    g.save();
+    g.translate(x, y);
+    g.strokeStyle = on ? C_AM : C_CY;
+    g.lineWidth = 7;
+    g.beginPath();
+    g.arc(0, 0, R, 0, 7);
+    g.stroke();
+    g.rotate(DS(stE) * LOCK_TURNS * Math.PI * 2);
+    g.lineWidth = 6;
+    g.beginPath();
+    g.moveTo(-R, 0);
+    g.lineTo(R, 0);
+    g.moveTo(0, 0);
+    g.lineTo(0, R);
+    g.stroke();
+    g.fillStyle = C_AM;
+    g.beginPath();
+    g.arc(0, -R, 7, 0, 7);
+    g.fill();
+    g.restore();
+    monoText(g, String(k), x, y - R - 22, 22, on ? C_AM : C_DM, 'center');
+    const lab =
+      Math.abs(stE) < 0.02
+        ? 'centre'
+        : (Math.abs(stE) > 0.97 ? 'full ' : turnsText(stE) + ' ') +
+          (DS(stE) > 0 ? 'R' : 'L');
+    monoText(g, lab, x, y + R + 40, 22, on ? '#0f1a2e' : C_CY, 'center');
+    const mv = m.steps[k - 1].moves.find((v) => v.dir);
+    if (mv)
+      panelText(
+        g,
+        mv.dir > 0 ? 'forwards' : 'reverse',
+        x,
+        y + R + 70,
+        19,
+        C_DM,
+        'center',
+        500,
+      );
+  }
+  panelText(
+    g,
+    `Full lock is ${turnsText(1)} from centre, and the front wheels turn ${Math.round(CARD.dMax / D2R)}°`,
+    36,
+    h - 30,
+    21,
+    C_DM,
+    'left',
+    500,
+  );
+}
+const HOLO = [
+  holoPanel(-7, 9.4, 13, 7.8, drawPivot),
+  holoPanel(9, 9.4, 13, 7.8, drawPlan),
+  holoPanel(25, 9.4, 13, 7.8, drawWheel),
+];
+let holoAt = 0,
+  holoKey = '';
+const HOLO_KEY = ['', '', ''];
+// each panel is drawn again only when what it shows has changed, the plan (the car moving over it) at most 5 times a second
+function redrawHolo() {
+  if (NOW - holoAt < 0.1 && holoKey !== '') return;
+  holoAt = NOW;
+  const force = holoKey === '';
+  if (force) HOLO_KEY.fill('');
+  holoKey = '-';
+  const keys = [
+    CUR.st.toFixed(2),
+    [
+      MK,
+      WRONG,
+      stepNow(),
+      (CUR.x * 5) | 0,
+      (CUR.z * 5) | 0,
+      (CUR.th * 20) | 0,
+    ].join('|'),
+    [MK, WRONG, stepNow(), MODE, DRV.step].join('|'),
+  ];
+  HOLO.forEach((H, i) => {
+    if (
+      !force &&
+      (keys[i] === HOLO_KEY[i] || (i === 1 && NOW - (H.userData.at || 0) < 0.2))
+    )
+      return;
+    HOLO_KEY[i] = keys[i];
+    H.userData.at = NOW;
+    H.userData.redraw((g, w, h) =>
+      boardBg(g, w, h, [drawPivot, drawPlan, drawWheel][i]),
+    );
+  });
+}
+
+// ======================================================================= the maker's mark: brass, set into the front edge of the slab, lit by its amber line; PARK painted on the near pavement's kerb side
+{
+  const m = makerMark(0.62, { k: 0.8 });
+  m.position.set(-5.2, -ROAD_H / 2, SLAB.z1 + 0.005);
+  G.add(m);
+}
+// and on the street, set into the paving behind the gap, graphite on the pale stone (it lies flat, so it reads from the road)
+{
+  const m = makerMark(2.5, { pale: true });
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(2.6, KERB_H + 0.005, STREET.kerb - 1.45);
+  SETG.street.add(m);
+}
+{
+  let hot = false;
+  const draw = (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.font = '800 150px Plus Jakarta Sans, sans-serif';
+    g.letterSpacing = '18px';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = hot ? '#ffd79a' : '#e9e5dc'; // road surface
+    g.globalCompositeOperation = 'destination-out';
+    const r2 = mulberry(13);
+    for (let i = 0; i < 5200; i++) {
+      g.globalAlpha = 0.25 + r2() * 0.6;
+      g.fillRect(r2() * w, r2() * h, 1 + r2() * 3, 1 + r2() * 2);
+    }
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+  };
+  const k = 0.32,
+    m = plate(1.5, 0.26, 1024, 180, draw, k, {
+      alphaTest: 0.2,
+      side: THREE.FrontSide,
+      fog: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -4,
+    });
+  m.rotation.set(-Math.PI / 2, 0, 0);
+  m.position.set(6.4, 0.005, 4.6);
+  m.userData.txt = 1;
+  G.add(m);
+  m.receiveShadow = true;
+  /* links disabled */
+}
+
 // ======================================================================= the light: the showroom at dusk, with dusk showroom render tuning
 Object.assign(RT, {
   pixelRatio: clamp(1.6, 1, Math.max(1, devicePixelRatio)),
@@ -6216,6 +8284,1018 @@ function setMode(m) {
   }
   driveKeys();
   syncDom(true);
+}
+
+// ======================================================================= the card: which manoeuvre, the stepper, the timeline, the wheel, the mistake, the numbers, one sentence, the steps as a checklist
+const tlEl = $('#tl');
+{
+  const box = $('#man');
+  MAN_KEYS.forEach((k, i) => {
+    const b = document.createElement('button');
+    b.textContent = MAN[k].name;
+    b.setAttribute('role', 'tab');
+    b.title = `${MAN[k].long} (⇧${i + 1})`;
+    b.onclick = () => {
+      setCine(false);
+      setManoeuvre(k);
+    };
+    box.appendChild(b);
+  });
+}
+function buildCard() {
+  const m = man(),
+    n = NSTEP();
+  [...$('#man').children].forEach((b, i) => {
+    b.classList.toggle('on', MAN_KEYS[i] === MK);
+    b.setAttribute('aria-selected', MAN_KEYS[i] === MK);
+  });
+  tlEl.querySelectorAll('.tk').forEach((e) => e.remove());
+  const nums = $('#tl-nums');
+  nums.innerHTML = '';
+  for (let k = 0; k <= n; k++) {
+    const tk = document.createElement('div');
+    tk.className = 'tk' + (k === m.wrong.step ? ' w' : '');
+    tk.style.left = (k / n) * 100 + '%';
+    tlEl.appendChild(tk);
+    const s = document.createElement('span');
+    s.textContent = k;
+    s.style.left = (k / n) * 100 + '%';
+    nums.appendChild(s);
+  }
+  tlEl.setAttribute('aria-valuemax', n);
+  const ol = $('#job');
+  ol.innerHTML = '';
+  m.steps.forEach((S, i) => {
+    const k = i + 1,
+      li = document.createElement('li');
+    li.innerHTML = `<button><i><span>${k}</span></i><b>${LR(S.t)}</b>${k === m.wrong.step ? '<u class="w">mistake</u>' : S.u ? `<u>${S.u}</u>` : ''}</button>`;
+    li.querySelector('button').onclick = () => goStep(k);
+    ol.appendChild(li);
+  });
+  $('#job-t').textContent = m.long;
+  $('#job-e').textContent = `${n} steps`;
+  $('#wr-t').textContent = LR(m.wrong.t);
+  $('#wr-s').textContent = LR(m.wrong.s);
+  lastStep = -1;
+  syncDom(true);
+}
+{
+  let on = false;
+  const set = (e) => {
+    const r = tlEl.getBoundingClientRect(),
+      n = nSteps();
+    let v = clamp((e.clientX - r.left) / r.width, 0, 1) * NSTEP();
+    const k = Math.round(v);
+    if (Math.abs(v - k) < 0.08) v = k;
+    TT = Math.min(v, n);
+    ANIM = null;
+  };
+  tlEl.addEventListener('pointerdown', (e) => {
+    toWatch();
+    touchedSoft();
+    on = true;
+    tlEl.setPointerCapture(e.pointerId);
+    set(e);
+  });
+  tlEl.addEventListener('pointermove', (e) => {
+    if (on) set(e);
+  });
+  tlEl.addEventListener('pointerup', () => {
+    on = false;
+  });
+  tlEl.addEventListener('pointercancel', () => {
+    on = false;
+  });
+  tlEl.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      e.stopPropagation();
+      e.key === 'ArrowLeft' ? prevStep() : nextStep();
+    }
+  });
+}
+$('#prev').onclick = prevStep;
+$('#next').onclick = nextStep;
+$('#play').onclick = () => {
+  if (CINE || PLAYALL) {
+    ANIM = null;
+    setCine(false);
+  } else {
+    setCine(false);
+    toWatch();
+    if (TT >= nSteps() - 1e-6) TT = 0;
+    PLAYALL = true;
+    $('#play').classList.add('on');
+    $('#play-ic').innerHTML = '<path d="M8 5v14M16 5v14"/>';
+    playStep(Math.floor(TT + 1e-6) + 1);
+  }
+};
+$('#again').onclick = () => {
+  driveReset();
+  flash('From the start');
+};
+$('#mode').onclick = () => setMode(MODE === 'drive' ? 'watch' : 'drive');
+$('#views')
+  .querySelectorAll('button')
+  .forEach(
+    (b) =>
+      (b.onclick = () => {
+        if (b.dataset.v === 'seat' && VW !== 'seat') VW_BEFORE = VW;
+        setView(b.dataset.v);
+      }),
+  );
+viewRow();
+$('#side')
+  .querySelectorAll('button')
+  .forEach(
+    (b) =>
+      (b.onclick = () => {
+        if ((b.dataset.s === 'l') !== LHT)
+          setSide(b.dataset.s === 'l', { save: 1, flash: 1 });
+      }),
+  );
+$('#snd').onclick = () => setSound(!SND);
+function setView(v) {
+  if (v === VW) return;
+  VW = v;
+  manual = false;
+  zoom = 1;
+  SEAT.ly = SEAT.lp = 0;
+  flash(VIEW_NAME[VW]);
+  viewRow();
+}
+// keep left or right: the ground in the mirror, the mirrors' glass and the lamps' light with it, the card and the words redrawn
+function setSide(left, o = {}) {
+  LHT = !!left;
+  if (o.save)
+    try {
+      localStorage.setItem('parking-side', LHT ? 'l' : 'r');
+    } catch {}
+  G.scale.set(U * MS(), U, U);
+  tiltG(SET_NOW === 'hill');
+  G.traverse((q) => {
+    if (q.userData.txt) q.scale.x = Math.abs(q.scale.x) * MS();
+  });
+  HILL_BASE.m.scale.x = HILL_BASE.lm.scale.x = MS();
+  for (const k in SET_LIGHTS)
+    for (const L of SET_LIGHTS[k]) {
+      if (L.x0 === undefined) L.x0 = L.p.x;
+      L.p.x = L.x0 * MS();
+    }
+  MIRRORS.forEach((m) => {
+    m.rt.texture.repeat.x = -MS();
+    m.rt.texture.offset.x = LHT ? 0 : 1;
+  });
+  G.updateMatrixWorld(true);
+  renderer.shadowMap.needsUpdate = true;
+  holoKey = '';
+  sideRow();
+  buildCard();
+  if (o.flash) {
+    VIEW_OUT = NOW;
+    $('#veil').style.opacity = 1;
+    manual = false;
+    frame(true);
+    snapCam();
+    flash(LHT ? 'Driving on the left' : 'Driving on the right');
+  }
+}
+function sideRow() {
+  $('#side')
+    .querySelectorAll('button')
+    .forEach((b) => {
+      const on = (b.dataset.s === 'l') === LHT;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on);
+    });
+}
+function viewRow() {
+  $('#views')
+    .querySelectorAll('button')
+    .forEach((b) => {
+      const on = b.dataset.v === VW;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on);
+    });
+}
+let VW_BEFORE = '3d';
+function seatToggle() {
+  if (VW === 'seat') setView(VW_BEFORE === 'seat' ? '3d' : VW_BEFORE);
+  else {
+    VW_BEFORE = VW;
+    setView('seat');
+  }
+}
+function cycleView() {
+  setView(VIEWS[(VIEWS.indexOf(VW) + 1) % VIEWS.length]);
+}
+// the pedals: held down to creep
+for (const [id, k] of [
+  ['#p-fwd', 'fwd'],
+  ['#p-rev', 'rev'],
+]) {
+  const b = $(id);
+  const dn = (e) => {
+      e.preventDefault();
+      sfxInit();
+      PED[k] = true;
+      b.classList.add('on');
+      driveKeys();
+      try {
+        b.setPointerCapture(e.pointerId);
+      } catch {}
+    },
+    up = () => {
+      PED[k] = false;
+      b.classList.remove('on');
+      driveKeys();
+    };
+  b.addEventListener('pointerdown', dn);
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+  b.addEventListener('lostpointercapture', up);
+}
+// the steering wheel: in practice, drag it round (it counts whole turns); double-click centres it
+{
+  const sw = $('#sw');
+  let on = null;
+  const ang = (e) => {
+    const r = sw.getBoundingClientRect();
+    return Math.atan2(
+      e.clientX - (r.left + r.width / 2),
+      -(e.clientY - (r.top + r.height / 2)),
+    );
+  };
+  sw.addEventListener('pointerdown', (e) => {
+    if (MODE !== 'drive') return;
+    e.preventDefault();
+    sw.setPointerCapture(e.pointerId);
+    on = { a: ang(e), turns: DS(DRV.st) * LOCK_TURNS };
+  });
+  sw.addEventListener('pointermove', (e) => {
+    if (!on) return;
+    const a = ang(e);
+    let d = a - on.a;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    on.a = a;
+    on.turns = clamp(on.turns + d / (Math.PI * 2), -LOCK_TURNS, LOCK_TURNS);
+    INP.steerTo = DS(on.turns / LOCK_TURNS);
+  });
+  const up = () => {
+    on = null;
+  };
+  sw.addEventListener('pointerup', up);
+  sw.addEventListener('pointercancel', up);
+  sw.addEventListener('dblclick', () => {
+    if (MODE === 'drive') INP.steerTo = 0;
+  });
+}
+const STEP_WORDS = {
+  parallel: [
+    (F) =>
+      `Look for a gap roughly one and a half cars long, about <b>${m1(STREET.gap)} m</b> for this ${m1(CARD.len)} m hatchback. You go in rear-first and the front follows. Press play, or tap a step.`,
+    (F) =>
+      `Indicate right. Draw level with the car ahead of the gap, about <b>75 cm</b> out (roughly a door’s width), and stop when your <b>rear bumper lines up with theirs</b>. Select reverse and check all round.`,
+    (F) =>
+      `Creep back and wind the wheel <b>${turnsText(1)} right</b> to full lock as you go. The car now circles a pivot <span class="c">${m1(R_MIN)} m to your right</span>, so the rear tucks in towards the kerb. Pause at about <b>45°</b>.`,
+    (F) =>
+      `Unwind to centre (<b>${turnsText(1)} left</b>) and keep reversing along that 45° line until your front is <b>past the car ahead</b>.`,
+    (F) =>
+      `Wind on <b>full lock left</b> and keep reversing. The pivot flips to your left, so the <span class="a">front tucks in</span> towards the kerb. Stop once you’re <b>parallel</b>.`,
+    (F) =>
+      `Centre the wheel and roll forward until the space in front and behind looks even. You’re <b class="g">${cm(F.kerb)} cm</b> off the kerb, ${m1(F.front)} m from the car ahead and ${m1(F.back)} m from the one behind.`,
+  ],
+  rbay: [
+    (F) =>
+      `Each bay is ${m1(BAY.w)} m wide and ${m1(BAY.d)} m deep, with the neighbours parked centrally. That gives you <b>${cm((BAY.w - 2 * CARD.hw) / 2)} cm</b> either side. Backing in, that’s plenty.`,
+    (F) =>
+      `Roll slowly past the bay about <b>1.5 m</b> from the bay ends, indicating right. Stop when your <b>door mirror lines up with the second line beyond the bay</b>.`,
+    (F) =>
+      `Reverse slowly on <b>full lock right</b> (${turnsText(1)}). The car circles a pivot <span class="c">${m1(R_MIN)} m to your right</span>, so the <span class="c">rear tucks in</span> on a tight curve while the <span class="a">front swings wide</span> into the aisle. Keep an eye on both mirrors.`,
+    (F) =>
+      `Once you’re square to the lines, <b>unwind the wheel</b>, ${turnsText(1)} left. The gaps on both sides should look equal, here <b>${cm(F.min[2])} cm</b> at the tightest.`,
+    (F) =>
+      `Back straight in until the front sits about <b>${cm(F.in)} cm</b> inside the line. The rear is then <b class="g">${cm(F.end)} cm</b> from the kerb. Handbrake on.`,
+  ],
+  fbay: [
+    (F) =>
+      `Driving in nose-first is trickier than it looks. The <span class="c">rear wheels take a tighter line</span> than the front ones, and the <span class="a">front corner swings wide</span>. The next bay is empty here. Between two cars, back in instead.`,
+    (F) =>
+      `Set up wide, about <b>2.5 m</b> from the bay ends. That uses most of the aisle. Indicate right.`,
+    (F) =>
+      `Wind on <b>full lock right</b> just after the bay’s near line passes your front wheel. The <span class="c">rear cuts inside</span> the front’s path and clears the next car by <b>${cm(F.min[1])} cm</b>.`,
+    (F) =>
+      `As the car comes square to the lines, <b>unwind the wheel</b>, ${turnsText(1)} left.`,
+    (F) =>
+      `Creep in until the front is about <b class="g">${cm(F.end)} cm</b> from the kerb. The rear sits ${cm(F.in)} cm inside the line.`,
+  ],
+  angle: [
+    (F) =>
+      `These bays lean ${ANG.a}° with the traffic, so you only turn through half a right angle: no full lock, no reversing. Getting out is the awkward part, because you reverse into the aisle.`,
+    (F) =>
+      `Run in about <b>1.5 m</b> from the bay ends, indicating right.`,
+    (F) =>
+      `When your front bumper reaches the bay’s near line, give the wheel <b>one turn right</b>. That puts the pivot <span class="c">${m1(turnR(man().lock || 1))} m</span> out, a gentler curve than full lock’s ${m1(R_MIN)} m.`,
+    (F) =>
+      `As the car lines up with the bay, <b>unwind the wheel</b>, one turn left.`,
+    (F) =>
+      `Creep in to about <b class="g">${cm(F.depth)} cm</b> from the end. Your closest pass to the cars either side was ${cm(Math.min(...F.min.slice(1)))} cm.`,
+  ],
+};
+STEP_WORDS.hill = [
+  (F) =>
+    `On a slope only the handbrake holds the car, so you aim the front wheels to make the kerb a backstop. If it rolls, a tyre meets the kerb instead of heading into traffic. This street climbs <b>1 in 10</b>.`,
+  (F) =>
+    `Indicate right and stop about <b>${cm(F.kerb)} cm</b> from the kerb, nose uphill. Hold it on the footbrake.`,
+  (F) =>
+    `Nose uphill with a kerb: wind the wheel to full lock <b>away from the kerb</b>, ${turnsText(1)} left here. The front wheels now point out into the road.`,
+  (F) =>
+    `Ease off the brake and let the car roll back gently. With the wheels turned it circles a pivot <span class="c">${m1(R_MIN)} m to your left</span>, so the front swings in. After <b>${cm(F.roll)} cm</b> the front tyre rests on the kerb like a wheel chock.`,
+  (F) =>
+    `Handbrake on, first gear (or P). The slope tugs the car downhill with about <b>${((1300 * HILL.pull) / 1000).toFixed(1)} kN</b>, a tenth of its weight. If the handbrake gives, the kerb catches it. Nose downhill? Turn the wheels <b>towards</b> the kerb instead.`,
+];
+let domAt = 0,
+  lastStep = -1,
+  lastWrong = -1,
+  lastMode = '';
+const jobLis = () => [...$('#job').children];
+function syncDom(force) {
+  if (!force && NOW - domAt < 0.08) return;
+  domAt = NOW;
+  const m = man(),
+    s = MODE === 'drive' ? clamp(DRV.step, 1, NSTEP()) : stepNow(),
+    S = s ? m.steps[s - 1] : null,
+    p = CUR;
+  const ww = wheelWords(p.st);
+  const sw = $('#sw-g');
+  sw.setAttribute(
+    'transform',
+    `rotate(${(DS(p.st) * LOCK_TURNS * 360).toFixed(1)})`,
+  );
+  const fr = DS(p.st) * LOCK_TURNS,
+    fa = (Math.abs(fr) % 1) * Math.PI * 2,
+    full = Math.abs(fr) >= 1,
+    sg = Math.sign(fr) || 1;
+  const arcD = (a0, a1, r) => {
+    const x0 = Math.sin(a0) * r,
+      y0 = -Math.cos(a0) * r,
+      x1 = Math.sin(a1) * r,
+      y1 = -Math.cos(a1) * r,
+      large = Math.abs(a1 - a0) > Math.PI ? 1 : 0,
+      sweep = a1 > a0 ? 1 : 0;
+    return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${large} ${sweep} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+  };
+  $('#sw-arc').setAttribute(
+    'd',
+    Math.abs(fr) < 0.01
+      ? ''
+      : full && fa < 0.05
+        ? `M0 -27.5A27.5 27.5 0 1 1 0 27.5A27.5 27.5 0 1 1 0 -27.5`
+        : (full
+            ? `M0 -27.5A27.5 27.5 0 1 1 0 27.5A27.5 27.5 0 1 1 0 -27.5`
+            : '') + arcD(0, sg * fa, 25),
+  );
+  $('#sw-arc').style.stroke = DS(p.st) > 0 ? '#2563ff' : '#d9480f';
+  // where this step turns the wheel to
+  let tgt = null;
+  if (MODE === 'watch' && s > 0) {
+    const P = path(),
+      e = P.S[Math.min(P.ends[s], P.n - 1)];
+    if (Math.abs(e.st - p.st) > 0.02) tgt = e.st;
+  } else if (MODE === 'drive') {
+    const want = WANT[MK][s - 1];
+    if (want !== undefined && Math.abs(want - p.st) > 0.04) tgt = want;
+  }
+  if (tgt !== null) {
+    const ta = DS(tgt) * LOCK_TURNS * Math.PI * 2;
+    $('#sw-tgt').setAttribute('d', arcD(ta - 0.25, ta + 0.25, 28.5));
+  } else $('#sw-tgt').setAttribute('d', '');
+  $('#sw-t').innerHTML =
+    Math.abs(p.st) < 0.02
+      ? 'Wheel centred'
+      : `<span class="${DS(p.st) > 0 ? 'r' : 'l'}">${LR(ww.t)}</span>`;
+  $('#sw-s').textContent =
+    tgt !== null
+      ? '→ ' +
+        LR(
+          `turn to ${Math.abs(tgt) < 0.02 ? 'centre' : (Math.abs(tgt) > 0.97 ? 'full lock ' : turnsText(tgt) + ' ') + (tgt > 0 ? 'right' : 'left')}`,
+        )
+      : LR(ww.s);
+  if (MODE === 'drive') {
+    coachSync();
+    const P = DRV.parked;
+    let w;
+    if (P) {
+      w =
+        `<span class="sn" style="color:var(--green)">Parked</span>` +
+        (MK === 'hill'
+          ? `The front tyre’s resting against the kerb with the wheels turned away from it, so if the handbrake slips, the kerb holds the car. Handbrake on, and first gear (or P).`
+          : MK === 'parallel'
+            ? `<b class="g">${cm(P.kerb)} cm</b> from the kerb, ${P.ang.toFixed(1)}° off straight, ${m1(Math.max(0, P.front))} m in front and ${m1(Math.max(0, P.back))} m behind.`
+            : `<b class="g">${P.ang.toFixed(1)}°</b> off square, ${cm(Math.abs(P.off))} cm off the middle.`) +
+        ` ${P.moves} move${P.moves > 1 ? 's' : ''}${P.touches ? `, <span class="r">${P.touches} touch${P.touches > 1 ? 'es' : ''}</span>` : ', not a touch'}. ⇧Z to go again, or try another.`;
+    } else
+      w =
+        `<span class="sn">Practice · step ${s} of ${NSTEP()}</span>` +
+        STEP_WORDS[MK][s](FACT[MK]);
+    {
+      const W = LR(w);
+      if (W !== syncDom.w) {
+        $('#why').innerHTML = W;
+        syncDom.w = W;
+      }
+    }
+    $('#why').classList.toggle('good', !!P);
+    $('#why').classList.remove('bad');
+  } else {
+    const wr = !!WRONG && s >= m.wrong.step,
+      w =
+        `<span class="sn">${s ? 'Step ' + s + ' · ' : ''}${wr ? 'the mistake' : S ? S.t : 'Choose your space'}</span>` +
+        (wr ? WRONG_WORDS[MK] : STEP_WORDS[MK][s](FACT[MK]));
+    {
+      const W = LR(w);
+      if (W !== syncDom.w) {
+        $('#why').innerHTML = W;
+        syncDom.w = W;
+      }
+    }
+    $('#why').classList.toggle('bad', wr);
+    $('#why').classList.toggle(
+      'good',
+      !wr && s === NSTEP() && TT >= NSTEP() - 1e-3,
+    );
+  }
+  const n = NSTEP(),
+    pp = (TT / n) * 100;
+  $('#tl-kn').style.left = pp + '%';
+  $('#tl-fl').style.width = pp + '%';
+  tlEl.setAttribute('aria-valuenow', TT.toFixed(2));
+  if (s !== lastStep || WRONG !== lastWrong || MODE !== lastMode) {
+    lastStep = s;
+    lastWrong = WRONG;
+    lastMode = MODE;
+    $('#st-title').textContent = S ? LR(S.t) : 'Choose your space';
+    $('#st-sub').textContent = s ? `step ${s} of ${n}` : 'before step 1';
+    [...$('#tl-nums').children].forEach((e, i) =>
+      e.classList.toggle('on', i === s),
+    );
+    const b = $('#wrong');
+    b.classList.toggle('on', !!WRONG);
+    b.setAttribute('aria-pressed', !!WRONG);
+    $('#wr-s').textContent = LR(
+      WRONG ? 'showing it · press again for the right way' : m.wrong.s,
+    );
+  }
+  jobLis().forEach((li, i) => {
+    const k = i + 1;
+    if (MODE === 'drive') {
+      li.classList.toggle('on', k === s && !DRV.parked);
+      li.classList.toggle('done', k < s || !!DRV.parked);
+      return;
+    }
+    li.classList.toggle('on', k === s && TT > k - 1 + 1e-6);
+    li.classList.toggle(
+      'done',
+      (TT >= k - 1e-6 && k !== s) || (TT >= k - 1e-6 && k === s && !ANIM),
+    );
+  });
+}
+
+// ======================================================================= render tuning (⌘'): keys, or click a row and drag its bar
+const TUNE = [
+  ['pixelRatio', 'Pixel ratio', 1, 2, 0.05, (v) => v.toFixed(2)],
+  ['msaa', 'MSAA', 0, 4, 2, (v) => (v ? v + '×' : 'off')],
+  ['smaa', 'SMAA', 0, 1, 1, (v) => (v ? 'on' : 'off')],
+  ['shadow', 'Shadow map', 512, 4096, 512, (v) => v + 'px'],
+  ['exposure', 'Exposure', 0.6, 1.8, 0.02, (v) => v.toFixed(2)],
+  ['fov', 'Field of view', 18, 55, 1, (v) => v + '°'],
+  ['sun', 'Key light', 0, 3, 0.05, (v) => v.toFixed(2)],
+  ['fill', 'Fill light', 0, 2, 0.05, (v) => v.toFixed(2)],
+  ['rim', 'Rim light', 0, 3, 0.05, (v) => v.toFixed(2)],
+  ['fog', 'Haze', 0, 2.5, 0.05, (v) => v.toFixed(2)],
+  ['sat', 'Saturation', 0.6, 1.8, 0.02, (v) => v.toFixed(2)],
+  ['env', 'Environment', 0, 2, 0.05, (v) => v.toFixed(2)],
+  ['reflect', 'Floor mirror', 0, 2, 0.05, (v) => v.toFixed(2)],
+  ['dof', 'Depth of field', 0, 1, 1, (v) => (v ? 'on' : 'off')],
+  ['focalBand', 'focal band', 0.3, 5, 0.05, (v) => v.toFixed(2) + '×', 1],
+  ['aperture', 'far blur', 0.05, 3, 0.05, (v) => v.toFixed(2), 1],
+  ['apertureNear', 'near blur', 0.05, 3, 0.05, (v) => v.toFixed(2), 1],
+  ['maxCoc', 'max bokeh', 3, 24, 1, (v) => v + 'px', 1],
+  ['bloom', 'Bloom', 0, 1, 1, (v) => (v ? 'on' : 'off')],
+  ['bloomStrength', 'strength', 0, 3, 0.02, (v) => v.toFixed(2) + '×', 1],
+  ['bloomRadius', 'radius', 0, 1.5, 0.02, (v) => v.toFixed(2), 1],
+  ['bloomThreshold', 'threshold', 0, 3, 0.05, (v) => v.toFixed(2) + '×', 1],
+  ['ao', 'Ambient occlusion', 0, 1, 1, (v) => (v ? 'on' : 'off')],
+  ['aoIntensity', 'intensity', 0, 1.5, 0.02, (v) => v.toFixed(2), 1],
+  ['aoRadius', 'radius', 0.1, 4, 0.05, (v) => v.toFixed(2), 1],
+  ['aoSamples', 'samples', 2, 16, 1, (v) => v, 1],
+  ['auto', 'Auto quality', 0, 1, 1, (v) => (v ? 'on' : 'off')],
+];
+let tuneSel = 0,
+  fpsNow = 0,
+  fpsBest = 0,
+  fpsTicks = 0,
+  fpsBad = 0;
+function applyTune() {
+  renderer.setPixelRatio(RT.pixelRatio);
+  composer.setPixelRatio(RT.pixelRatio);
+  if (scenePass.rt.samples !== RT.msaa) {
+    scenePass.rt.samples = RT.msaa;
+    scenePass.rt.dispose();
+  }
+  smaa.enabled = !!RT.smaa;
+  if (sun.shadow.mapSize.x !== RT.shadow) {
+    sun.shadow.mapSize.set(RT.shadow, RT.shadow);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
+  bloom.enabled = !!RT.bloom;
+  bloom.radius = RT.bloomRadius;
+  gtao.enabled = true;
+  gtao.updateGtaoMaterial({
+    radius: RT.aoRadius,
+    thickness: 1.1,
+    distanceExponent: 1.4,
+    distanceFallOff: 1,
+    scale: 1.2,
+    samples: RT.ao ? RT.aoSamples : 2,
+  });
+  dof.enabled = !!RT.dof;
+  dof.u.maxCoc.value = RT.maxCoc;
+  applyView();
+  resize();
+}
+function drawTune() {
+  $('#tune-rows').innerHTML = TUNE.map(
+    ([k, label, min, max, , fmt, sub], i) => {
+      const v = RT[k],
+        p = ((v - min) / (max - min)) * 100;
+      return `<div class="tr${i === tuneSel ? ' sel' : ''}${sub ? ' sub' : ''}" data-i="${i}"><b>${label}</b><span class="tk"><i style="left:${clamp(p, 0, 100)}%"></i></span><u>${fmt(v)}</u></div>`;
+    },
+  ).join('');
+  $('#tune-rows')
+    .querySelectorAll('.tr')
+    .forEach((r) => {
+      r.onclick = () => {
+        tuneSel = +r.dataset.i;
+        drawTune();
+      };
+      const tk = r.querySelector('.tk');
+      tk.onpointerdown = (e) => {
+        e.stopPropagation();
+        tuneSel = +r.dataset.i;
+        tk.setPointerCapture(e.pointerId);
+        const set = (ev) => {
+          const b = tk.getBoundingClientRect(),
+            [k, , min, max, step] = TUNE[tuneSel];
+          const v = clamp(
+            Math.round(
+              (min + ((ev.clientX - b.left) / b.width) * (max - min)) / step,
+            ) * step,
+            min,
+            max,
+          );
+          if (v !== RT[k]) {
+            RT[k] = +v.toFixed(4);
+            if (k !== 'auto') RT.auto = 0;
+            applyTune();
+          }
+          const i = tk.querySelector('i');
+          i.style.left =
+            clamp(((RT[k] - min) / (max - min)) * 100, 0, 100) + '%';
+          r.querySelector('u').textContent = TUNE[tuneSel][5](RT[k]);
+          $('#tune-json').value = JSON.stringify(RT);
+        };
+        set(e);
+        tk.onpointermove = (ev) => {
+          if (tk.hasPointerCapture(ev.pointerId)) set(ev);
+        };
+        tk.onpointerup = () => drawTune();
+      };
+    });
+  $('#tune-json').value = JSON.stringify(RT);
+}
+function nudge(dir, coarse) {
+  const [k, , min, max, step] = TUNE[tuneSel];
+  const v = clamp(
+    +(RT[k] + dir * step * (coarse ? 5 : 1)).toFixed(4),
+    min,
+    max,
+  );
+  if (v === RT[k]) return;
+  RT[k] = v;
+  if (k !== 'auto') RT.auto = 0;
+  applyTune();
+  drawTune();
+}
+function toggleTune(on) {
+  const el = $('#tune');
+  const open = on === undefined ? el.hidden : on;
+  el.hidden = !open;
+  if (open) drawTune();
+}
+function tuneKeys(e) {
+  const k = e.key;
+  if (k === 'ArrowUp' || k === 'ArrowDown') {
+    tuneSel =
+      (tuneSel + (k === 'ArrowUp' ? -1 : 1) + TUNE.length) % TUNE.length;
+    drawTune();
+    $('#tune-rows .tr.sel')?.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+  if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    nudge(k === 'ArrowLeft' ? -1 : 1, e.shiftKey);
+    return true;
+  }
+  if (k === 'Enter' || k === ' ') {
+    const [key, , min, max, step] = TUNE[tuneSel];
+    if (max - min === step) {
+      RT[key] = RT[key] ? 0 : 1;
+      if (key !== 'auto') RT.auto = 0;
+      applyTune();
+      drawTune();
+      return true;
+    }
+    return false;
+  }
+  if (k === '0' || k === ')') {
+    if (e.shiftKey) Object.assign(RT, RT0);
+    else RT[TUNE[tuneSel][0]] = RT0[TUNE[tuneSel][0]];
+    RT.auto = 0;
+    applyTune();
+    drawTune();
+    return true;
+  }
+  if (k === 'c' || k === 'C') {
+    navigator.clipboard?.writeText(JSON.stringify(RT, null, 1));
+    return true;
+  }
+  if (k === 'Escape') {
+    toggleTune(false);
+    return true;
+  }
+  return false;
+}
+$('#tune-json').addEventListener('change', (e) => {
+  try {
+    const v = JSON.parse(e.target.value);
+    for (const key in RT0) if (typeof v[key] === 'number') RT[key] = v[key];
+    RT.auto = 0;
+    applyTune();
+    drawTune();
+  } catch {
+    drawTune();
+  }
+});
+
+const hint = $('#ui-hint');
+let hintAt = -9;
+function flash(text) {
+  hint.textContent = text;
+  hint.classList.add('on');
+  hintAt = NOW;
+}
+addEventListener('keydown', (e) => {
+  if (
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    (e.code === 'Quote' || e.key === "'")
+  ) {
+    e.preventDefault();
+    toggleTune();
+    return;
+  }
+  if (
+    e.metaKey ||
+    e.ctrlKey ||
+    e.altKey ||
+    /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) ||
+    $('#info').open
+  )
+    return;
+  if (!$('#tune').hidden && tuneKeys(e)) {
+    e.preventDefault();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (e.shiftKey && /^Digit[1-5]$/.test(e.code)) {
+    e.preventDefault();
+    setCine(false);
+    setManoeuvre(MAN_KEYS[+e.code.slice(5) - 1]);
+    return;
+  }
+  if (
+    [
+      'w',
+      'a',
+      's',
+      'd',
+      'q',
+      'e',
+      '=',
+      '+',
+      '-',
+      '_',
+      'arrowleft',
+      'arrowright',
+      'arrowup',
+      'arrowdown',
+      'shift',
+    ].includes(k)
+  ) {
+    if (e.target.id === 'tl' && k.startsWith('arrow')) return;
+    if (k.startsWith('arrow')) e.preventDefault();
+    if (
+      MODE === 'drive' &&
+      [
+        'w',
+        'a',
+        's',
+        'd',
+        'arrowleft',
+        'arrowright',
+        'arrowup',
+        'arrowdown',
+      ].includes(k)
+    )
+      sfxInit();
+    else if (k !== 'shift') touched();
+    held.add(k);
+    driveKeys();
+    return;
+  }
+  if (k === ' ') {
+    e.preventDefault();
+    if (MODE === 'drive') return;
+    $('#play').click();
+  } else if (k === 'c') {
+    if (CINE && TOUR) setCine(false);
+    else setCine(true, true);
+  } else if (k === ']') nextStep();
+  else if (k === '[') prevStep();
+  else if (/^[1-5]$/.test(k) && !e.shiftKey) {
+    goStep(Math.min(+k, NSTEP()));
+  } else if (k === '0') goStep(0);
+  else if (k === 't') setWrong(!WRONG);
+  else if (k === 'p') setMode(MODE === 'drive' ? 'watch' : 'drive');
+  else if (k === 'z') {
+    if (MODE === 'drive') {
+      driveReset();
+      flash('From the start');
+    }
+  } else if (k === 'v') cycleView();
+  else if (k === 'f') seatToggle();
+  else if (k === 'l') setSide(!LHT, { save: 1, flash: 1 });
+  else if (k === 'm') setSound(!SND);
+  else if (k === 'r') resetView();
+  else if (k === 'n') {
+    showTags = !showTags;
+    flash(showTags ? 'Labels on' : 'Labels off');
+  } else if (e.code === 'Slash' && e.shiftKey) {
+    e.preventDefault();
+    app.classList.toggle('ui-off');
+    flash(
+      app.classList.contains('ui-off')
+        ? 'Interface hidden · ⇧/ to show'
+        : 'Interface shown',
+    );
+  }
+}); // ⇧/ and ⌘' are private: never listed in the help
+canvas.addEventListener('dblclick', (e) => {
+  if (!pick(e)) resetView();
+});
+$('#how').onclick = () => $('#info').showModal();
+$('#close').onclick = () => $('#info').close();
+$('#info').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.close();
+});
+setInterval(() => {
+  if (!$('#tune').hidden)
+    $('#tune-fps').textContent = Math.round(fpsNow) + ' fps';
+}, 500);
+/* share removed */
+$('#i-r').textContent = m1(R_MIN) + ' m';
+$('#i-t').textContent = turnsText(1);
+
+// ======================================================================= one frame of the model: where the car is (the clock's or yours), its lights, the explanation over it
+const ERR_TXT = {
+  hill: [
+    'Into the car behind',
+    `rolled back at ${Math.round(FACT.hill.hitV)} km/h`,
+  ],
+  parallel: ['The back wheel hits the kerb', 'full lock held past 45°'],
+  rbay: ['Into the car beside', 'the turn started a bay too soon'],
+  fbay: [
+    'The back clips the car beside',
+    'the back wheels cut inside the front',
+  ],
+  angle: ['The back clips the car beside', 'turned in too soon'],
+};
+const errEl = $('#err'),
+  ERR = { key: '', at: -9, jolt: -9 },
+  _ep = new THREE.Vector3();
+function errSign() {
+  let t = '',
+    sub = '',
+    show = false,
+    good = false,
+    at = null;
+  if (MODE === 'watch' && WRONG && PATHS[MK].hit && TT >= nSteps() - 0.02) {
+    [t, sub] = ERR_TXT[MK];
+    at = PATHS[MK].hit.at;
+    show = true;
+  } else if (MODE === 'drive' && DRV.bump) {
+    t =
+      DRV.bump.kind === 'kerb'
+        ? 'Kerb'
+        : DRV.bump.kind === 'edge'
+          ? 'The edge'
+          : 'Bump';
+    sub =
+      DRV.bump.kind === 'edge'
+        ? 'the slab ends here'
+        : 'back away the other way';
+    at = DRV.bump.at;
+    show = true;
+  } else if (MODE === 'drive' && DRV.parked) {
+    t = 'Parked';
+    const P = DRV.parked;
+    sub =
+      MK === 'hill'
+        ? 'the tyre against the kerb'
+        : MK === 'parallel'
+          ? `${cm(P.kerb)} cm from the kerb · ${P.moves} move${P.moves > 1 ? 's' : ''}`
+          : `${P.ang.toFixed(0)}° · ${cm(Math.abs(P.off))} cm off centre`;
+    at = toG(DRV, CARD.L / 2, 0);
+    good = true;
+    show = true;
+  }
+  if (show && showTags) {
+    gw(_ep, at[0], good ? 1.9 : 0.9, at[1]).project(camera);
+    const vis = _ep.z < 1;
+    errEl.style.left = (((_ep.x + 1) / 2) * host.clientWidth).toFixed(1) + 'px';
+    errEl.style.top = (((1 - _ep.y) / 2) * host.clientHeight).toFixed(1) + 'px';
+    const k = t + good;
+    if (k !== ERR.key) {
+      ERR.key = k;
+      $('#err-t').textContent = t;
+      $('#err-s').textContent = sub;
+      errEl.classList.toggle('good', good);
+      $('#err-ic').innerHTML = good
+        ? '<path d="M6 12.5l4 4 8-9"/>'
+        : '<path d="M7 7l10 10M17 7 7 17"/>';
+      errEl.classList.remove('shake');
+      void errEl.offsetWidth;
+      if (!good) {
+        errEl.classList.add('shake');
+        ERR.jolt = NOW;
+      }
+    }
+    errEl.classList.toggle('on', vis);
+  } else {
+    errEl.classList.remove('on');
+    if (!show) ERR.key = '';
+  }
+}
+// a short, small jolt of the camera when something is hit (none with reduced motion)
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function errJolt() {
+  const e = NOW - ERR.jolt;
+  if (REDUCED || e > 0.45 || e < 0) return;
+  const a = (1 - e / 0.45) * 0.06;
+  camera.position.x += Math.sin(e * 71) * a;
+  camera.position.y += Math.sin(e * 53 + 1) * a * 0.6;
+}
+// the path you have driven in practice, for the tracks
+const TRAIL = { S: [], n: 0 };
+function trailPush() {
+  const L = TRAIL.S[TRAIL.n - 1];
+  if (
+    L &&
+    Math.hypot(L.x - DRV.x, L.z - DRV.z) < 0.06 &&
+    Math.abs(L.th - DRV.th) < 0.02
+  )
+    return;
+  if (TRAIL.n >= 1800) {
+    TRAIL.S.splice(0, 300);
+    TRAIL.n -= 300;
+  }
+  TRAIL.S[TRAIL.n++] = { x: DRV.x, z: DRV.z, th: DRV.th, st: DRV.st };
+}
+function frame(force) {
+  if (MODE === 'watch') {
+    poseAt(TT);
+    Object.assign(CUR, {
+      x: POSE.x,
+      z: POSE.z,
+      th: POSE.th,
+      st: POSE.st,
+      dir: POSE.dir,
+      v: POSE.v,
+    });
+    const s = stepNow(),
+      m = man(),
+      S = s ? m.steps[s - 1] : null;
+    LIVE.sig = TT > 0.02 && s <= 2 && !(WRONG && TT >= nSteps() - 0.02) ? 1 : 0;
+    const firstDir = S ? (S.moves.find((v) => v.dir) || {}).dir : 0;
+    LIVE.rev = CUR.dir < 0 || (Math.abs(CUR.v) < 0.05 && firstDir < 0 && s > 0);
+    LIVE.brake = Math.abs(CUR.v) < 0.12;
+    applyCar({ ...CUR, wt: POSE.wt });
+  } else {
+    Object.assign(CUR, {
+      x: DRV.x,
+      z: DRV.z,
+      th: DRV.th,
+      st: DRV.st,
+      dir: DRV.dir,
+      v: DRV.v,
+    });
+    LIVE.sig = DRV.step <= 2 && !DRV.parked ? 1 : 0;
+    LIVE.rev = DRV.dir < 0;
+    LIVE.brake =
+      Math.abs(DRV.v) < 0.12 ||
+      (INP.fwd && DRV.v < 0) ||
+      (INP.rev && DRV.v > 0);
+    applyCar({ ...CUR, wt: DRV.wt });
+    trailPush();
+  }
+  sensors(CUR, SET_NOW, false);
+}
+function updateExplain() {
+  rays.begin();
+  _pi = 0;
+  const al = 1;
+  if (MODE === 'watch') {
+    const P = path(),
+      s = stepNow(),
+      u = s ? UU(s) : 0,
+      n = nSteps(),
+      iNow = POSE.i;
+    if (showTracks && s > 0) tracks(P, iNow, al, P.ends[s - 1]);
+    if (s > 0 && !(WRONG && TT >= n - 0.02))
+      stepAhead(
+        P,
+        iNow,
+        Math.min(P.ends[s], P.n - 1),
+        al * (1 - smooth(0.9, 1, u)),
+      );
+    // the rotation still to come in this step: from the heading now to the step's end
+    const e = P.S[Math.min(P.ends[Math.max(s, 1)], P.n - 1)],
+      ahead = Math.abs(deg(e.th - CUR.th)) * D2R;
+    const lab =
+      MK === 'hill'
+        ? 1
+        : MK === 'parallel'
+          ? s === 2 || s === 4
+            ? 2
+            : 1
+          : MK === 'rbay'
+            ? s === 2
+              ? 2
+              : 1
+            : MK === 'fbay'
+              ? s === 2
+                ? 2
+                : 1
+              : s === 2
+                ? 2
+                : 1;
+    // the turning point and the arcs while the step moves the car or turns the wheel; a step that only waits (the handbrake) shows neither
+    const busy =
+      s > 0 &&
+      man().steps[s - 1].moves.some((v) => v.dir || v.steer !== undefined);
+    if (busy || WRONG)
+      turning(CUR, ahead + 0.05, al, (s > 0 && s < n) || WRONG ? lab : 0);
+    else turning({ st: 0 }, 0, al, 0);
+    wheelHud(CUR, s > 0 ? e.st : null, al);
+    if (!WRONG || s < man().wrong.step) {
+      CUE[MK](s, u, CUR, al);
+    } else {
+      hideTag(T_.cue);
+      hideTag(T_.cue2);
+      hideTag(T_.cue3);
+      if (MK === 'hill') gravityArrow(CUR, al, true);
+    }
+    for (const k of ['cue', 'cue2', 'cue3', 'gapF', 'gapB', 'kerb'])
+      if (T_[k].at !== NOW) hideTag(T_[k]);
+    sensors(CUR, SET_NOW, true);
+  } else {
+    const P = PATHS[MK].norm,
+      s = clamp(DRV.step, 1, NSTEP());
+    if (showTracks) tracks(TRAIL, TRAIL.n - 1, al);
+    // the way an instructor would do this step: its path and where it ends, dimmed
+    if (!DRV.parked)
+      stepAhead(P, P.ends[s - 1], Math.min(P.ends[s], P.n - 1), al * 0.45);
+    if (DRV.parked) turning({ st: 0 }, 0, al, 0);
+    else turning(CUR, 1.2, al, 2);
+    wheelHud(CUR, WANT[MK][s - 1] ?? null, al);
+    CUE[MK](s, 1, CUR, al * 0.8);
+    for (const k of ['cue', 'cue2', 'cue3', 'gapF', 'gapB', 'kerb'])
+      if (T_[k].at !== NOW) hideTag(T_[k]);
+    sensors(CUR, SET_NOW, true);
+  }
+  rays.end();
+  errSign();
 }
 
 // ======================================================================= frame

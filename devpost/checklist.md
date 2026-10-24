@@ -49,7 +49,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
   Learner check: Switch between the maneuvers and confirm each one practices the situation you intended.
   Commit: `Add reverse bay and angle parking scenarios`
 
-- [ ] **5. The coach — shows you how, then guides you**
+- [x] **5. The coach — shows you how, then guides you**
   Becomes usable: On landing, the coach demonstrates the maneuver (the car runs through a correct park while you watch), then a Practice action hands control over. During your own attempt, guidance near the car shows distances and how much to adjust, with reference lines. Camera views (top-down, in-car, chase, free 3D) help judge the spot. Proximity sensor beeps if they fit.
   Why now: The coach is the other half of the kernel — the thing that makes this a trainer, not just a driving toy. It builds on a working drive-and-park loop so there's something real to guide.
   PRD ref: `prd.md > Features and Behavior > The coach — demonstrate, then guide`, `prd.md > Camera views`, `prd.md > Features and Behavior > Sensor sound (if it fits)`
@@ -72,7 +72,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
 ## Hands-on Checkpoints
 
 - [x] Early usable behavior explored — after slice 3 (first complete drive → park → verdict loop), try it and give feedback while there's still room to shape the rest.
-- [ ] Final kick-the-tires exploration and feedback completed — after the coach slice, explore the whole thing freely.
+- [x] Final kick-the-tires exploration and feedback completed — after the coach slice, explore the whole thing freely.
 
 ## Final Review
 
