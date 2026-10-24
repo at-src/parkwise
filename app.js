@@ -1796,6 +1796,352 @@ for (const k in SETS) SETS[k].polys = SETS[k].cars.map((c) => carPoly(c.pose));
 SETS.bays.backZ = SETS.fbays.backZ = BAY.z - BAY.d;
 SETS.angle.backD = ANG.d;
 
+// ======================================================================= the manoeuvres. Each step is a list of moves: dir +1 forwards / -1 backwards, the wheel turned to steer
+// over ramp metres at the start (the wheel is turned briskly while the car creeps), then either dist metres or until the heading reaches th.
+// The paths are integrated once at load; the clock, the director, the camera and the explanation all read them.
+const D2R = Math.PI / 180,
+  RAMP = 0.55;
+const MAN = {};
+// ---- parallel: reverse into a kerbside gap behind a parked car (traffic on the right: the kerb is on your right)
+{
+  const S = STREET,
+    fx = -S.gap / 2,
+    cz = S.pz + CARD.hw * 2 + 0.75; // pulled up alongside: 75 cm out from the car in front
+  const x1 = fx - CARD.ro; // the back axle when our back bumper is level with theirs
+  MAN.parallel = {
+    set: 'street',
+    name: 'Parallel',
+    long: 'Kerbside parallel',
+    start: { x: x1 + 9, z: cz, th: Math.PI, st: 0 },
+    steps: [
+      {
+        t: 'Line up with the front car',
+        moves: [{ dir: 1, steer: 0, dist: 9 }],
+        sig: 1,
+      },
+      {
+        t: 'Wind right, reverse to 45°',
+        moves: [
+          { dir: -1, steer: 0, dist: 0.2 },
+          { dir: -1, steer: 1, ramp: RAMP, th: Math.PI + 40 * D2R },
+        ],
+      },
+      {
+        t: 'Unwind, reverse till clear',
+        moves: [{ dir: -1, steer: 0, ramp: RAMP, dist: 0.6 }],
+      },
+      {
+        t: 'Wind left, tuck the nose in',
+        moves: [{ dir: -1, steer: -1, ramp: RAMP, th: Math.PI, sgn: -1 }],
+      },
+      {
+        t: 'Unwind and centre up',
+        moves: [
+          { still: 1, steer: 0 },
+          { dir: 1, steer: 0, dist: 0.8 },
+        ],
+      },
+    ],
+    wrong: {
+      step: 2,
+      t: 'Holding the lock too long',
+      s: 'rear wheel climbs the kerb',
+      start: { x: x1 + 9, z: cz, th: Math.PI, st: 0 },
+      steps: [
+        { moves: [{ dir: 1, steer: 0, dist: 9 }] },
+        {
+          moves: [
+            { dir: -1, steer: 0, dist: 0.2 },
+            { dir: -1, steer: 1, ramp: RAMP, th: Math.PI + 110 * D2R },
+          ],
+        },
+      ],
+    },
+  };
+}
+// ---- reverse bay: drive past, stop with your mirror on the second line past the bay, full lock and reverse in
+{
+  const z0 = BAY.z + 1.5 + CARD.hw,
+    xs = -4.06;
+  MAN.rbay = {
+    set: 'bays',
+    name: 'Back in',
+    long: 'Back into a bay',
+    start: { x: xs + 12, z: z0, th: Math.PI, st: 0 },
+    steps: [
+      {
+        t: 'Roll past the bay',
+        moves: [{ dir: 1, steer: 0, dist: 12 }],
+        sig: 1,
+      },
+      {
+        t: 'Wind right and reverse',
+        moves: [
+          { dir: -1, steer: 1, ramp: RAMP, th: 1.5 * Math.PI - 4.2 * D2R },
+        ],
+      },
+      {
+        t: 'Unwind once square',
+        moves: [{ dir: -1, steer: 0, ramp: RAMP, dist: 0 }],
+      },
+      {
+        t: 'Back straight in',
+        moves: [{ dir: -1, steer: 0, dist: 2.37 - 0.2 }],
+      },
+    ],
+    wrong: {
+      step: 1,
+      t: 'Turning in too soon',
+      s: 'you land across the next bay',
+      start: { x: xs + 12, z: z0, th: Math.PI, st: 0 },
+      steps: [
+        { moves: [{ dir: 1, steer: 0, dist: 12 - 2.5 }] },
+        {
+          moves: [
+            { dir: -1, steer: 1, ramp: RAMP, th: 1.5 * Math.PI - 4.2 * D2R },
+          ],
+        },
+      ],
+    },
+  };
+}
+// ---- forward bay: swing wide, turn late, let the back follow the front in
+{
+  const z0 = BAY.z + 2.5 + CARD.hw,
+    xs = 4.07;
+  MAN.fbay = {
+    set: 'fbays',
+    name: 'Nose in',
+    long: 'Nose into a bay',
+    start: { x: xs + 8, z: z0, th: Math.PI, st: 0 },
+    steps: [
+      { t: 'Set up wide', moves: [{ dir: 1, steer: 0, dist: 8 }], sig: 1 },
+      {
+        t: 'Wind on at the line',
+        moves: [
+          {
+            dir: 1,
+            steer: 1,
+            ramp: RAMP,
+            th: Math.PI / 2 + 4.2 * D2R,
+            sgn: -1,
+          },
+        ],
+      },
+      {
+        t: 'Unwind once square',
+        moves: [{ dir: 1, steer: 0, ramp: RAMP, dist: 0 }],
+      },
+      { t: 'Creep in, stop', moves: [{ dir: 1, steer: 0, dist: 0.5 }] },
+    ],
+    wrong: {
+      step: 1,
+      t: 'Turning in too soon',
+      s: 'the rear clips the car beside',
+      start: { x: xs + 8, z: z0, th: Math.PI, st: 0 },
+      steps: [
+        { moves: [{ dir: 1, steer: 0, dist: 8 - 1.6 }] },
+        {
+          moves: [
+            {
+              dir: 1,
+              steer: 1,
+              ramp: RAMP,
+              th: Math.PI / 2 + 4.2 * D2R,
+              sgn: -1,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+// ---- angle: the bays lean the way the traffic goes, so you turn in less than a right angle, with about one turn of the wheel
+{
+  const z0 = ANG.z + 1.5 + CARD.hw,
+    lock = 1 / LOCK_TURNS,
+    xs = 5.163;
+  MAN.angle = {
+    set: 'angle',
+    name: 'Angled',
+    long: 'Angled bay',
+    start: { x: xs + 8, z: z0, th: Math.PI, st: 0 },
+    lock,
+    steps: [
+      {
+        t: 'Run in 1.5 m out',
+        moves: [{ dir: 1, steer: 0, dist: 8 }],
+        sig: 1,
+      },
+      {
+        t: 'One turn at the line',
+        moves: [
+          { dir: 1, steer: lock, ramp: RAMP, th: ANG.th + 2.5 * D2R, sgn: -1 },
+        ],
+      },
+      {
+        t: 'Unwind once lined up',
+        moves: [{ dir: 1, steer: 0, ramp: RAMP, dist: 0 }],
+      },
+      { t: 'Creep in, stop', moves: [{ dir: 1, steer: 0, dist: 1.7 }] },
+    ],
+    wrong: {
+      step: 1,
+      t: 'Turning in too soon',
+      s: 'the rear cuts the neighbour’s corner',
+      start: { x: xs + 8, z: z0, th: Math.PI, st: 0 },
+      steps: [
+        { moves: [{ dir: 1, steer: 0, dist: 8 - 1.6 }] },
+        {
+          moves: [
+            {
+              dir: 1,
+              steer: lock,
+              ramp: RAMP,
+              th: ANG.th + 2.5 * D2R,
+              sgn: -1,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+// ---- hill: facing uphill with a kerb, the wheels go away from the kerb and the car rolls back until a front tyre rests against it
+{
+  const s0 = { x: 7.0, z: STREET.pz, th: Math.PI, st: 0 };
+  MAN.hill = {
+    set: 'hill',
+    name: 'Slope',
+    long: 'Kerbside on a slope',
+    start: s0,
+    steps: [
+      {
+        t: 'Stop close to the kerb',
+        moves: [{ dir: 1, steer: 0, dist: 7 }],
+        sig: 1,
+      },
+      { t: 'Steer away from the kerb', moves: [{ still: 1, steer: -1 }] },
+      {
+        t: 'Ease back onto the kerb',
+        moves: [{ dir: -1, steer: -1, kerb: STREET.kerb, slow: 1 }],
+      },
+      { t: 'Handbrake on, in gear', moves: [{ wait: 2.6 }] },
+    ],
+    wrong: {
+      step: 2,
+      t: 'Leaving the wheels straight',
+      s: 'it rolls into the car behind',
+      start: s0,
+      steps: [
+        { moves: [{ dir: 1, steer: 0, dist: 7 }] },
+        { moves: [{ dir: -1, steer: 0, grav: 1, dist: 9 }] },
+      ],
+    },
+  };
+}
+const MAN_KEYS = ['parallel', 'rbay', 'fbay', 'angle', 'hill'];
+
+// ---- integrate a script into samples {x,z,th,st,dir,s,k (step), m (move)}; ds 1 cm. Moves ending on a heading stop when it is reached.
+function integrate(start, steps, ds = 0.01) {
+  const p = { x: start.x, z: start.z, th: start.th },
+    S = [
+      {
+        x: p.x,
+        z: p.z,
+        th: p.th,
+        st: start.st || 0,
+        dir: 0,
+        s: 0,
+        k: 0,
+        m: -1,
+      },
+    ];
+  let st = start.st || 0,
+    s = 0;
+  const ends = [0];
+  steps.forEach((step, k) => {
+    step.moves.forEach((mv, mi) => {
+      const st0 = st,
+        ramp = Math.max(mv.ramp ?? 0.6, 1e-6),
+        dir = mv.dir,
+        turns = mv.steer !== undefined && mv.steer !== st0;
+      let d = 0;
+      const need =
+        mv.still || mv.wait
+          ? 0
+          : mv.dist !== undefined
+            ? Math.max(mv.dist, turns ? ramp : 0)
+            : undefined;
+      for (let it = 0; it < 100000; it++) {
+        if (need !== undefined && d >= need - 1e-9) break;
+        if (
+          mv.th !== undefined &&
+          (mv.th - p.th) * (mv.sgn || 1) <= 0 &&
+          d > ramp * 0.5
+        )
+          break;
+        if (
+          mv.kerb !== undefined &&
+          tyrePolys(p, st)[3].some((q) => q[1] <= mv.kerb)
+        )
+          break;
+        const h = need !== undefined ? Math.min(ds, need - d) : ds;
+        if (mv.steer !== undefined)
+          st = st0 + (mv.steer - st0) * Math.min(1, (d + h) / ramp);
+        stepPose(p, dir * h, st);
+        d += h;
+        s += h;
+        S.push({
+          x: p.x,
+          z: p.z,
+          th: p.th,
+          st,
+          dir,
+          s,
+          k: k + 1,
+          m: mi,
+          g: mv.grav ? 1 : 0,
+          slow: mv.slow ? 1 : 0,
+        });
+      }
+      // a move of no distance that only turns the wheel: the car stands still while it turns (samples every 2 % of lock, so the clock can animate it)
+      if (mv.wait)
+        S.push({
+          x: p.x,
+          z: p.z,
+          th: p.th,
+          st,
+          dir: 0,
+          s,
+          k: k + 1,
+          m: mi,
+          still: 1,
+          wait: mv.wait,
+        });
+      if (d === 0 && turns) {
+        const n = Math.max(2, Math.ceil(Math.abs(mv.steer - st0) / 0.02));
+        for (let i = 1; i <= n; i++) {
+          st = st0 + ((mv.steer - st0) * i) / n;
+          S.push({
+            x: p.x,
+            z: p.z,
+            th: p.th,
+            st,
+            dir: 0,
+            s,
+            k: k + 1,
+            m: mi,
+            still: 1,
+          });
+        }
+      }
+    });
+    ends.push(S.length - 1);
+  });
+  return { S, ends };
+}
+
 // ======================================================================= the showroom: navy walls, hologram panels, amber strips, a polished floor, windows onto dusk hills
 // Room units are 25 cm. The training ground (a slab of real road, 25 × 15 m) fills the middle of a tall hall; there is no ceiling to see from up here.
 let _dt = 0.016,
@@ -4466,6 +4812,230 @@ function setSet(name) {
   renderer.shadowMap.needsUpdate = true;
 }
 
+// ======================================================================= the manoeuvres' paths, and their clock. Each path is integrated once (1 cm steps); then a speed is planned
+// along it (creeping, slower while the wheel is being turned, never faster than the car can brake from) and every sample gets its time.
+const SPEED = {
+  approach: 1.6,
+  fwd: 0.75,
+  rev: 0.6,
+  ramp: 0.42,
+  acc: 0.5,
+  v0: 0.05,
+  turnRate: 1.15,
+}; // m/s, m/s², steering turns a second while standing
+function plan(start, steps) {
+  const { S, ends } = integrate(start, steps);
+  const n = S.length;
+  // each wheel's own travel (signed: forwards positive), from its own path: the inside wheels travel less than the outside ones
+  const WP = [
+    [0, -CARD.tw],
+    [0, CARD.tw],
+    [CARD.L, -CARD.tw],
+    [CARD.L, CARD.tw],
+  ];
+  const wt = WP.map(() => new Float32Array(n)),
+    prev = WP.map(([a, b]) => toG(S[0], a, b));
+  for (let i = 1; i < n; i++)
+    WP.forEach(([a, b], j) => {
+      const q = toG(S[i], a, b),
+        d = Math.hypot(q[0] - prev[j][0], q[1] - prev[j][1]);
+      wt[j][i] = wt[j][i - 1] + d * (S[i].dir || 0);
+      prev[j] = q;
+    });
+  // the speed: runs of motion in one direction, each starting and ending at rest
+  const v = new Float32Array(n),
+    T = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const q = S[i];
+    if (q.still || !q.dir) {
+      v[i] = 0;
+      continue;
+    }
+    const st = STEPS_OF(steps, q.k);
+    const vmax =
+        st && st.sig
+          ? SPEED.approach
+          : q.slow
+            ? 0.22
+            : q.dir > 0
+              ? SPEED.fwd
+              : SPEED.rev,
+      turning = i > 0 && Math.abs(q.st - S[i - 1].st) > 1e-6;
+    v[i] = turning ? Math.min(vmax, SPEED.ramp) : vmax;
+  }
+  const ds = (i) => Math.abs(S[i].s - S[i - 1].s);
+  const boundary = (i) =>
+    i === 0 ||
+    S[i].still ||
+    !S[i].dir ||
+    S[i].dir !== S[i - 1].dir ||
+    S[i].k !== S[i - 1].k ||
+    S[i - 1].still ||
+    !S[i - 1].dir;
+  for (let i = 0; i < n; i++)
+    if (S[i].dir && (boundary(i) || i === n - 1 || boundary(i + 1)))
+      v[i] = Math.min(v[i], SPEED.v0);
+  for (let i = 1; i < n; i++)
+    if (S[i].dir && !boundary(i))
+      v[i] = Math.min(v[i], Math.sqrt(v[i - 1] ** 2 + 2 * SPEED.acc * ds(i)));
+  // rolling free down the hill: v² = 2 a d from where it let go, a the slope's pull less the tyres' rolling resistance
+  {
+    let s0 = null;
+    for (let i = 0; i < n; i++) {
+      if (!S[i].g) {
+        s0 = null;
+        continue;
+      }
+      if (s0 === null) s0 = S[i].s;
+      v[i] = Math.sqrt(SPEED.v0 ** 2 + 2 * HILL.roll * (S[i].s - s0));
+    }
+  }
+  for (let i = n - 2; i >= 0; i--)
+    if (S[i].dir && !boundary(i + 1) && !S[i].g)
+      v[i] = Math.min(
+        v[i],
+        Math.sqrt(v[i + 1] ** 2 + 2 * SPEED.acc * ds(i + 1)),
+      );
+  for (let i = 1; i < n; i++) {
+    const q = S[i];
+    let dt;
+    if (q.still || (!q.dir && q.k === S[i - 1].k))
+      dt =
+        (Math.abs(q.st - S[i - 1].st) * LOCK_TURNS) / SPEED.turnRate +
+        (q.wait || 0);
+    else
+      dt = ds(i) / Math.max(0.02, (v[i] + (boundary(i) ? v[i] : v[i - 1])) / 2);
+    T[i] = T[i - 1] + dt;
+  }
+  // each step: when it starts and how long it lasts (a beat to look first, then the motion)
+  const t0 = [],
+    dur = [];
+  for (let k = 1; k < ends.length; k++) {
+    t0.push(T[ends[k - 1]]);
+    dur.push(T[ends[k]] - T[ends[k - 1]]);
+  }
+  return { S, ends, wt, v, T, t0, dur, n };
+}
+function STEPS_OF(steps, k) {
+  return steps[k - 1];
+}
+// the mistake's path stops at the first touch: a parked car (its body) or the kerb (a tyre's face)
+function firstTouch(P, set) {
+  const s = SETS[set];
+  for (let i = 0; i < P.n; i++) {
+    const q = P.S[i],
+      poly = carPoly(q);
+    for (let j = 0; j < s.polys.length; j++)
+      if (overlap(poly, s.polys[j])) {
+        const [d, a, b] = nearest(poly, s.polys[j]);
+        return {
+          i,
+          kind: 'car',
+          j,
+          at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+        };
+      }
+    for (const kz of s.kerbs) {
+      const T = tyrePolys(q, q.st);
+      for (let w = 0; w < 4; w++)
+        for (const [x, z] of T[w])
+          if (z < kz) return { i, kind: 'kerb', w, at: [x, kz] };
+    }
+  }
+  return null;
+}
+const PATHS = {};
+for (const key of MAN_KEYS) {
+  const m = MAN[key];
+  // the mistake keeps the right first steps before the one that goes wrong; it ends where the car first touches something
+  const wrongSteps = m.wrong.steps.map((s, i) => ({ ...m.steps[i], ...s }));
+  const norm = plan(m.start, m.steps),
+    wrong = plan(m.wrong.start, wrongSteps),
+    hit = firstTouch(wrong, m.set);
+  if (hit) {
+    const cut = hit.i;
+    wrong.n = cut + 1;
+    wrong.S.length = cut + 1;
+    wrong.ends = wrong.ends.map((e) => Math.min(e, cut));
+    wrong.dur = wrong.dur.map((d, k) =>
+      Math.max(
+        0.01,
+        wrong.T[Math.min(wrong.ends[k + 1], cut)] - wrong.T[wrong.ends[k]],
+      ),
+    );
+  }
+  PATHS[key] = { norm, wrong, hit };
+}
+
+// ======================================================================= the clock: TT runs from 0 to the number of steps; step k plays while TT goes from k-1 to k
+let MK = 'parallel',
+  TT = 0,
+  WRONG = 0,
+  MODE = 'watch';
+const man = () => MAN[MK],
+  NSTEP = () => MAN[MK].steps.length;
+const path = () => (WRONG ? PATHS[MK].wrong : PATHS[MK].norm);
+const stepNow = () => clamp(Math.ceil(TT - 1e-6), 0, NSTEP());
+const UU = (k) => clamp(TT - (k - 1), 0, 1);
+// the pose at TT: the time within the step, the sample at that time, interpolated
+const POSE = {
+  x: 0,
+  z: 0,
+  th: 0,
+  st: 0,
+  dir: 0,
+  v: 0,
+  wt: [0, 0, 0, 0],
+  k: 0,
+  i: 0,
+};
+function poseAt(tt, out = POSE) {
+  const P = path(),
+    n = P.ends.length - 1,
+    k = clamp(Math.ceil(tt - 1e-6), 1, n),
+    u = clamp(tt - (k - 1), 0, 1);
+  const a = P.ends[k - 1],
+    b = Math.min(P.ends[k], P.n - 1),
+    t = P.T[a] + u * (P.T[b] - P.T[a]);
+  let lo = a,
+    hi = Math.max(a, b);
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (P.T[m] <= t) lo = m;
+    else hi = m;
+  }
+  const i = lo,
+    j = Math.min(hi, P.n - 1),
+    f = P.T[j] > P.T[i] ? clamp((t - P.T[i]) / (P.T[j] - P.T[i]), 0, 1) : 0,
+    A = P.S[i],
+    B = P.S[j];
+  out.x = lerp(A.x, B.x, f);
+  out.z = lerp(A.z, B.z, f);
+  out.th = lerp(A.th, B.th, f);
+  out.st = lerp(A.st, B.st, f);
+  out.dir = B.dir || A.dir;
+  out.v = lerp(P.v[i], P.v[j], f) * (out.dir || 0);
+  out.k = k;
+  out.i = i;
+  for (let w = 0; w < 4; w++) out.wt[w] = lerp(P.wt[w][i], P.wt[w][j], f);
+  if (tt <= 0) {
+    const S0 = P.S[0];
+    out.x = S0.x;
+    out.z = S0.z;
+    out.th = S0.th;
+    out.st = S0.st;
+    out.v = 0;
+    out.dir = 0;
+    for (let w = 0; w < 4; w++) out.wt[w] = 0;
+  }
+  return out;
+}
+// a pose's end of step k (the ghost of where the step is going)
+const stepEnd = (k) => {
+  const P = path();
+  return P.S[Math.min(P.ends[clamp(k, 0, P.ends.length - 1)], P.n - 1)];
+};
+
 // ======================================================================= the learner's car, posed: where it is, its front wheels turned to their own angles, each wheel rolled by its own travel,
 // the brake lamps bright while it slows or stands, the reversing lamps on while it goes backwards, the indicator flashing while you signal
 const LIVE = {
@@ -4493,6 +5063,77 @@ function applyCar(p) {
   C.lamps.l.visible = LIVE.sig < 0 && blink;
   C.lamps.rev.visible = !!LIVE.rev;
   C.U.uTail.value = LIVE.brake ? 1.1 : 0.22;
+}
+
+// ======================================================================= what the model says, worked out once: the numbers the words, the tags and the panels quote
+const FACT = {};
+for (const key of MAN_KEYS) {
+  const P = PATHS[key].norm,
+    e = P.S[P.n - 1],
+    F = (FACT[key] = {});
+  if (key === 'parallel') {
+    F.kerb = e.z - CARD.hw - STREET.kerb;
+    F.front = e.x - CARD.fb - -STREET.gap / 2;
+    F.back = STREET.gap / 2 - (e.x + CARD.ro);
+    const s2 = P.S[P.ends[2]];
+    F.ang = (s2.th - Math.PI) / D2R;
+  }
+  if (key === 'rbay' || key === 'fbay') {
+    const nose = key === 'rbay' ? toG(e, CARD.fb, 0) : toG(e, -CARD.ro, 0),
+      tail = key === 'rbay' ? toG(e, -CARD.ro, 0) : toG(e, CARD.fb, 0);
+    F.in = BAY.z - nose[1];
+    F.end = tail[1] - (BAY.z - BAY.d);
+  }
+  if (key === 'hill') {
+    const a = P.S[P.ends[2]],
+      b = P.S[P.ends[3]];
+    F.kerb = a.z - CARD.hw - STREET.kerb;
+    F.roll = b.s - a.s;
+    F.turn = Math.abs(b.th - a.th) / D2R;
+    const W = PATHS.hill.wrong,
+      h = PATHS.hill.hit;
+    if (h) {
+      F.hitV = W.v[h.i] * 3.6;
+      F.hitD = W.S[h.i].s - W.S[W.ends[1]].s;
+    }
+  }
+  if (key === 'angle') {
+    const f = toG(e, CARD.fb, 0);
+    F.depth = ANG.d - (f[0] * ANG.ax[0] + (f[1] - ANG.z) * ANG.ax[1]);
+  }
+  // the closest the car came to anything on the way in, step by step
+  const s = SETS[MAN[key].set];
+  F.min = [];
+  for (let k = 1; k < P.ends.length; k++) {
+    let mn = 9;
+    for (let i = P.ends[k - 1]; i <= P.ends[k]; i += 4) {
+      const poly = carPoly(P.S[i]);
+      for (const o of s.polys) mn = Math.min(mn, polyDist(poly, o));
+    }
+    F.min.push(mn);
+  }
+}
+const cm = (m) => Math.round(m * 100),
+  m1 = (m) => (Math.round(m * 10) / 10).toFixed(1);
+// steering words: how far the wheel is from centre, in turns (the way an instructor counts them)
+function turnsText(st) {
+  const t = Math.abs(st) * LOCK_TURNS;
+  if (t < 0.06) return 'centred';
+  const q = Math.round(t * 4) / 4,
+    w = Math.floor(q),
+    f = q - w,
+    fr = f === 0.25 ? '¼' : f === 0.5 ? '½' : f === 0.75 ? '¾' : '';
+  return (w ? w : '') + fr + (q <= 1 ? ' turn' : ' turns');
+}
+function wheelWords(st) {
+  if (Math.abs(st) < 0.02)
+    return { t: 'Wheel centred', s: 'front wheels straight' };
+  const side = st > 0 ? 'right' : 'left',
+    full = Math.abs(st) > 0.97;
+  return {
+    t: (full ? 'Full lock ' : turnsText(st) + ' ') + side,
+    s: `${turnsText(st)} · front wheels ${Math.round((Math.abs(st) * CARD.dMax) / D2R)}° · turning point ${m1(turnR(st))} m out`,
+  };
 }
 
 // ======================================================================= practice: you drive. Hold forwards or reverse to creep; turn the wheel and it stays where you leave it, as a real one does.
@@ -5399,6 +6040,182 @@ function applyCam(t) {
   dof.u.range.value = band;
   dof.u.cocScale.value.set(RT.apertureNear, RT.aperture);
   focPt.copy(cam.t);
+}
+
+// ======================================================================= the clock: play a step, step back, scrub, the mistake, and the director (one manoeuvre, or the tour of all five)
+let ANIM = null,
+  CINE = true,
+  TOUR = true;
+const DIR = { phase: 'start', wait: 0 };
+const nSteps = () => (WRONG ? PATHS[MK].wrong.ends.length - 1 : NSTEP());
+function playStep(k) {
+  k = clamp(k, 1, nSteps());
+  if (TT < k - 1 - 1e-6 || TT > k - 1e-6) TT = k - 1 + 5e-4;
+  const P = path();
+  ANIM = { from: TT, to: k, t0: NOW, dur: P.dur[k - 1] * (k - TT) };
+}
+function goStep(k) {
+  toWatch();
+  touchedSoft();
+  ANIM = null;
+  if (k <= 0) {
+    TT = 0;
+    return;
+  }
+  TT = k - 1;
+  playStep(k);
+}
+function nextStep() {
+  toWatch();
+  touchedSoft();
+  if (ANIM) {
+    TT = ANIM.to;
+    ANIM = null;
+  }
+  const k = Math.floor(TT + 1e-6) + 1;
+  if (k > nSteps()) {
+    flash(WRONG ? 'That’s where it goes wrong' : 'That was the last step');
+    return;
+  }
+  playStep(k);
+}
+function prevStep() {
+  toWatch();
+  touchedSoft();
+  ANIM = null;
+  const k = Math.ceil(TT - 1e-6);
+  TT = Math.max(0, k - 1);
+}
+function stepClock() {
+  if (ANIM) {
+    const u = clamp((NOW - ANIM.t0) / Math.max(ANIM.dur, 0.01), 0, 1);
+    TT = lerp(ANIM.from, ANIM.to, u);
+    if (u >= 1) {
+      ANIM = null;
+      DIR.wait = NOW + (CINE ? 1.6 : 0);
+      if (!CINE && PLAYALL) {
+        if (TT < nSteps() - 1e-6) playStep(Math.floor(TT + 1e-6) + 1);
+        else setCine(false);
+      }
+    }
+  }
+}
+let PLAYALL = false;
+function runDirector() {
+  if (!CINE || ANIM || NOW < DIR.wait || MODE !== 'watch') return;
+  if (DIR.phase === 'start') {
+    DIR.phase = 'run';
+    DIR.wait = NOW + 0.4;
+    return;
+  }
+  if (TT < nSteps() - 1e-6) {
+    playStep(Math.floor(TT + 1e-6) + 1);
+    return;
+  }
+  if (DIR.phase === 'run') {
+    DIR.phase = 'end';
+    DIR.wait = NOW + 3.2;
+    return;
+  }
+  if (DIR.phase === 'end') {
+    if (TOUR) {
+      const i = MAN_KEYS.indexOf(MK);
+      setManoeuvre(MAN_KEYS[(i + 1) % MAN_KEYS.length], true);
+    } else {
+      TT = 0;
+    }
+    DIR.phase = 'start';
+    DIR.wait = NOW + 1;
+  }
+}
+let VIEW_OUT = -99;
+function veilTick() {
+  const op = 1 - clamp((NOW - VIEW_OUT) / 0.5, 0, 1);
+  $('#veil').style.opacity = op.toFixed(3);
+}
+function setCine(on, tour = false) {
+  CINE = on;
+  TOUR = on && tour;
+  PLAYALL = false;
+  $('#play').classList.toggle('on', on);
+  $('#play-ic').innerHTML = on
+    ? '<path d="M8 5v14M16 5v14"/>'
+    : '<path d="M7 5v14l12-7z"/>';
+  $('#play').title = on ? 'Pause (space)' : 'Play the whole manoeuvre (space)';
+  if (on) {
+    toWatch();
+    manual = false;
+    zoom = 1;
+    if (TT >= nSteps() - 1e-6) {
+      TT = 0;
+      snapCam();
+    }
+    DIR.phase = 'run';
+    DIR.wait = NOW + 0.2;
+  }
+}
+const touched = () => {
+  if (CINE || PLAYALL) setCine(false);
+};
+const touchedSoft = () => {
+  if (CINE || PLAYALL) setCine(false);
+  manual = false;
+};
+function resetView() {
+  manual = false;
+  zoom = 1;
+  SEAT.ly = SEAT.lp = 0;
+}
+// change manoeuvre: the set re-dresses under the veil, the camera cuts
+function setManoeuvre(k, fromDirector) {
+  if (!MAN[k]) return;
+  if (!fromDirector) touchedSoft();
+  VIEW_OUT = NOW;
+  $('#veil').style.opacity = 1;
+  MK = k;
+  WRONG = 0;
+  ANIM = null;
+  TT = 0;
+  setSet(MAN[k].set);
+  TAGS.forEach((t) => {
+    t.userData.a = 0;
+    t.userData.want = 0;
+    t.visible = false;
+    t.lp = null;
+  });
+  if (MODE === 'drive') driveReset();
+  manual = false;
+  zoom = 1;
+  holoKey = '';
+  buildCard();
+  frame(true);
+  snapCam();
+}
+function toWatch() {
+  if (MODE === 'drive') setMode('watch');
+}
+function setMode(m) {
+  MODE = m;
+  $('#ctl').classList.toggle('practice', m === 'drive');
+  $('#mode').classList.toggle('on', m === 'drive');
+  $('#mode-t').textContent = m === 'drive' ? 'Watch' : 'Practice';
+  $('#mode').title =
+    m === 'drive' ? 'Watch it done (⇧P)' : 'Drive it yourself (⇧P)';
+  $('#sw').classList.toggle('drag', m === 'drive');
+  if (m === 'drive') {
+    setCine(false);
+    WRONG = 0;
+    driveReset();
+    flash(
+      matchMedia('(pointer: coarse)').matches
+        ? 'Your turn. Hold Forwards or Reverse, and drag the wheel round'
+        : 'Your turn. ↑ ↓ to creep, ← → to turn the wheel',
+    );
+  } else {
+    INP.steerTo = null;
+  }
+  driveKeys();
+  syncDom(true);
 }
 
 // ======================================================================= frame

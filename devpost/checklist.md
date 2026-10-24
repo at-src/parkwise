@@ -39,7 +39,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
   Learner check: Try to park and confirm the verdict matches what you'd judge as a clean park.
   Commit: `Add parallel parking scenario and pass/fail check`
 
-- [ ] **4. More parking situations to practice**
+- [x] **4. More parking situations to practice**
   Becomes usable: Additional common maneuvers — reverse bay and angle parking — selectable, each with its own layout and the same drive-and-check loop. Switching scenarios rebuilds the scene.
   Why now: Covers the common situations a learner actually faces. Each scenario is a data entry, so this is additive — room to add more from experience later if time permits, without reworking anything.
   PRD ref: `prd.md > Features and Behavior > Reset and scenario switching`, `prd.md > What We're Building`
