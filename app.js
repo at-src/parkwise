@@ -8154,6 +8154,14 @@ function prevStep() {
   const k = Math.ceil(TT - 1e-6);
   TT = Math.max(0, k - 1);
 }
+function setWrong(on) {
+  toWatch();
+  touchedSoft();
+  WRONG = on ? 1 : 0;
+  ANIM = null;
+  TT = 0;
+  playStep(1);
+}
 function stepClock() {
   if (ANIM) {
     const u = clamp((NOW - ANIM.t0) / Math.max(ANIM.dur, 0.01), 0, 1);
@@ -8390,6 +8398,7 @@ $('#play').onclick = () => {
     playStep(Math.floor(TT + 1e-6) + 1);
   }
 };
+$('#wrong').onclick = () => setWrong(!WRONG);
 $('#again').onclick = () => {
   driveReset();
   flash('From the start');
@@ -8614,6 +8623,13 @@ STEP_WORDS.hill = [
   (F) =>
     `Handbrake on, first gear (or P). The slope tugs the car downhill with about <b>${((1300 * HILL.pull) / 1000).toFixed(1)} kN</b>, a tenth of its weight. If the handbrake gives, the kerb catches it. Nose downhill? Turn the wheels <b>towards</b> the kerb instead.`,
 ];
+const WRONG_WORDS = {
+  parallel: `<span class="r">Stay on full lock past 45°</span> and the car keeps circling the same pivot. The rear wheel climbs the kerb while the front is still out in the lane. Unwind at 45°.`,
+  rbay: `<span class="r">Turn in too soon</span>, at the first line instead of the second, and the same curve finishes a whole bay early. The rear swings into the neighbour.`,
+  fbay: `<span class="r">Turn in too soon</span> and the rear wheels, cutting inside the front ones, drag the back of the car into the neighbour.`,
+  hill: `<span class="r">Leave the wheels straight</span> and nothing steers the car into the kerb. If the handbrake slips, it rolls straight back down and hits the car behind at <b>${Math.round(FACT.hill.hitV)} km/h</b>, ${m1(FACT.hill.hitD)} m later.`,
+  angle: `<span class="r">Turn in the moment the bay opens</span> and the rear cuts across the neighbour’s corner.`,
+};
 let domAt = 0,
   lastStep = -1,
   lastWrong = -1,

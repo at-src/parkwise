@@ -59,7 +59,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
   Learner check: Watch the demo, then practice, and say whether the guidance actually helps you place the car.
   Commit: `Add coach guidance, demonstration mode, and camera views`
 
-- [ ] **6. (If time permits) "What not to do" demonstration**
+- [x] **6. (If time permits) "What not to do" demonstration**
   Becomes usable: An optional mode that shows a common mistake and its consequence, so the learner sees what goes wrong, not just what goes right.
   Why now: A nice teaching addition once the core trainer works. Explicitly optional — only if time allows; not required to prove the idea.
   PRD ref: `prd.md > Possible Later Enhancements`
