@@ -4690,6 +4690,57 @@ const WPOS = [
   [CARD.L, -CARD.tw],
   [CARD.L, CARD.tw],
 ];
+// ---- how parked the car is: inside the space, square to it, and (at the kerb) how far from it
+function parkedness(p) {
+  const m = MK,
+    e = p;
+  let ok = false,
+    info = {};
+  const ang = (a) => {
+    let d = a;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    return Math.abs(d) / D2R;
+  };
+  if (m === 'parallel') {
+    const fb = e.x - CARD.fb * Math.cos(e.th - Math.PI),
+      rb = e.x + CARD.ro;
+    info.kerb = e.z - CARD.hw - STREET.kerb;
+    info.ang = ang(e.th - Math.PI);
+    info.front = e.x - CARD.fb + STREET.gap / 2;
+    info.back = STREET.gap / 2 - (e.x + CARD.ro);
+    ok =
+      info.ang < 6 && info.kerb < 0.5 && info.front > 0.05 && info.back > 0.05;
+  } else if (m === 'rbay' || m === 'fbay') {
+    const a1 = ang(e.th + Math.PI / 2),
+      a2 = ang(e.th - Math.PI / 2);
+    info.ang = Math.min(a1, a2);
+    info.rev = a1 < a2;
+    const poly = carPoly(e);
+    const zs = poly.map((q) => q[1]),
+      xs = poly.map((q) => q[0]);
+    info.off = (Math.min(...xs) + Math.max(...xs)) / 2;
+    info.inside =
+      Math.max(...zs) < BAY.z + 0.15 && Math.min(...zs) > BAY.z - BAY.d;
+    info.end = Math.min(...zs) - (BAY.z - BAY.d);
+    ok = info.ang < 6 && Math.abs(info.off) < 0.4 && info.inside;
+  } else if (m === 'hill') {
+    info.kerb = e.z - CARD.hw - STREET.kerb;
+    info.ang = ang(e.th - Math.PI);
+    info.off = 0;
+    ok = !!DRV.rest && e.st < -0.8 && info.kerb < 0.6;
+  } else if (m === 'angle') {
+    info.ang = ang(e.th - ANG.th);
+    const c = toG(e, CARD.L / 2, 0),
+      a = ANG.ax;
+    info.off = -c[0] * a[1] + (c[1] - ANG.z) * a[0];
+    const f = toG(e, CARD.fb, 0);
+    info.depth = f[0] * a[0] + (f[1] - ANG.z) * a[1];
+    const r = toG(e, -CARD.ro, 0);
+    info.tail = r[0] * a[0] + (r[1] - ANG.z) * a[1];
+    ok = info.ang < 6 && Math.abs(info.off) < 0.4 && info.tail > -0.1;
+  }
+  return { ok, info };
+}
 // ======================================================================= the light: the showroom at dusk, with dusk showroom render tuning
 Object.assign(RT, {
   pixelRatio: clamp(1.6, 1, Math.max(1, devicePixelRatio)),

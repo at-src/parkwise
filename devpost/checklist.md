@@ -29,7 +29,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
   Learner check: Take the wheel and confirm driving — especially reversing — feels like a real car.
   Commit: `Add car driving and steering dynamics`
 
-- [ ] **3. You can attempt a park and get a verdict**
+- [x] **3. You can attempt a park and get a verdict**
   Becomes usable: The first real parking situation (parallel) with its layout, and a check that tells you when you've parked correctly — within the markings, straight, not touching the cars/curb.
   Why now: This closes the core loop for the first time — drive, park, get told if it's right — so there's a complete, demonstrable experience as early as possible.
   PRD ref: `prd.md > Features and Behavior > Parking check (pass/fail)`, `prd.md > The Core Journey`
@@ -71,7 +71,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
 
 ## Hands-on Checkpoints
 
-- [ ] Early usable behavior explored — after slice 3 (first complete drive → park → verdict loop), try it and give feedback while there's still room to shape the rest.
+- [x] Early usable behavior explored — after slice 3 (first complete drive → park → verdict loop), try it and give feedback while there's still room to shape the rest.
 - [ ] Final kick-the-tires exploration and feedback completed — after the coach slice, explore the whole thing freely.
 
 ## Final Review
