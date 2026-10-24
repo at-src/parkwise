@@ -1487,6 +1487,315 @@ function makerMark(w, o = {}) {
   });
   return m;
 }
+// ======================================================================= the model: a kinematic bicycle. The car turns about one point on the line of its back axle, R = wheelbase / tan(steer).
+// G metres, y up, origin on the asphalt. A pose is the back axle's centre (x, z) and the heading th: forward is (cos th, -sin th), the right side is (sin th, cos th).
+// steer runs -1..1 (+1 full lock right). The road wheels' angle is steer × 35°; the steering wheel turns 15.2 times as far (1.48 turns to full lock).
+const CARD = {
+  L: 2.64,
+  ro: 0.78,
+  fo: 0.865,
+  hw: 0.895,
+  tw: 0.765,
+  dMax: (35 * Math.PI) / 180,
+  ratio: 15.2,
+  mir: 2.12,
+  eye: 1.02,
+};
+CARD.fb = CARD.L + CARD.fo;
+CARD.len = CARD.fb + CARD.ro;
+const R_MIN = CARD.L / Math.tan(CARD.dMax); // 3.77 m from the back axle's centre to the turning point
+const LOCK_TURNS = (CARD.dMax * CARD.ratio) / (2 * Math.PI); // 1.48 turns of the steering wheel from centre to full lock
+const delta = (st) => -st * CARD.dMax; // the bicycle's front wheel angle (left positive)
+const turnR = (st) =>
+  Math.abs(st) < 1e-4 ? Infinity : CARD.L / Math.tan(Math.abs(st) * CARD.dMax);
+function stepPose(p, ds, st) {
+  const k = Math.tan(delta(st)) / CARD.L;
+  if (Math.abs(k) < 1e-9) {
+    p.x += Math.cos(p.th) * ds;
+    p.z -= Math.sin(p.th) * ds;
+    return p;
+  }
+  const th1 = p.th + k * ds;
+  p.x += (Math.sin(th1) - Math.sin(p.th)) / k;
+  p.z += (Math.cos(th1) - Math.cos(p.th)) / k;
+  p.th = th1;
+  return p;
+}
+// a point of the car (a forward of the back axle, b to its right) in G
+const toG = (p, a, b) => [
+  p.x + Math.cos(p.th) * a + Math.sin(p.th) * b,
+  p.z - Math.sin(p.th) * a + Math.cos(p.th) * b,
+];
+// ---- which side the traffic keeps to. The model always keeps right (the driver on the left, the kerb on the right); keeping left is the
+// same ground in a mirror, the slab flipped end to end (G.scale.x < 0), so the kerb's on your left and the seat's on the right. The paths,
+// the collisions and every number stay as they are: only what is shown swaps (the words and arrows, the wheel's turn on screen, the keys,
+// the camera's side, the panels on the wall).
+let LHT = false;
+const MS = () => (LHT ? -1 : 1),
+  DS = (st) => (LHT ? -st : st);
+const LR_SWAP = {
+  right: 'left',
+  left: 'right',
+  Right: 'Left',
+  Left: 'Right',
+  '→': '←',
+  '←': '→',
+};
+const LR = (s) => {
+  if (!LHT || !s) return s;
+  return String(s)
+    .replace(/right (angle|way)/g, '\u0001$1')
+    .replace(/\b(right|left|Right|Left)\b|→|←/g, (m) => LR_SWAP[m])
+    .replace(/\u0001/g, 'right ');
+};
+// each front wheel's own angle (Ackermann: the inside wheel turns more, both square to the line from the turning point); bw its offset to the right
+const wheelAng = (st, bw) => {
+  const d = delta(st);
+  return Math.abs(d) < 1e-6
+    ? 0
+    : Math.atan(CARD.L / (bw + CARD.L / Math.tan(d)));
+};
+// the body's plan, from the hatchback's own sections (back-axle frame): boxy at the back, well rounded at the nose
+const PLAN = [
+  [-0.78, 0.84],
+  [-0.72, 0.865],
+  [-0.63, 0.885],
+  [-0.43, 0.895],
+  [3.02, 0.88],
+  [3.32, 0.82],
+  [3.42, 0.765],
+  [3.475, 0.68],
+  [3.505, 0.555],
+];
+const PLAN_P = [
+  ...PLAN,
+  ...PLAN.slice()
+    .reverse()
+    .map(([a, b]) => [a, -b]),
+];
+function carPoly(p, out) {
+  out = out || PLAN_P.map(() => [0, 0]);
+  for (let i = 0; i < PLAN_P.length; i++) {
+    const [a, b] = PLAN_P[i],
+      c = Math.cos(p.th),
+      s = Math.sin(p.th);
+    out[i][0] = p.x + c * a + s * b;
+    out[i][1] = p.z - s * a + c * b;
+  }
+  return out;
+}
+// the four tyres where they meet a kerb's face (50 cm long at kerb height, 20.5 cm wide), the front two turned
+function tyrePolys(p, st) {
+  const { L, tw } = CARD,
+    out = [];
+  for (const [a, side] of [
+    [0, -1],
+    [0, 1],
+    [L, -1],
+    [L, 1],
+  ]) {
+    const bw = side * tw,
+      ang = a > 0 ? wheelAng(st, bw) : 0,
+      c = Math.cos(ang),
+      s = Math.sin(ang),
+      hl = 0.25,
+      hwid = 0.1025;
+    out.push(
+      [
+        [-hl, -hwid],
+        [hl, -hwid],
+        [hl, hwid],
+        [-hl, hwid],
+      ].map(([u, v]) => toG(p, a + u * c + v * s, bw - u * s + v * c)),
+    );
+  }
+  return out;
+}
+function _proj(P, ax, ay) {
+  let lo = 1e9,
+    hi = -1e9;
+  for (const q of P) {
+    const d = q[0] * ax + q[1] * ay;
+    if (d < lo) lo = d;
+    if (d > hi) hi = d;
+  }
+  return [lo, hi];
+}
+function overlap(A, B) {
+  for (const P of [A, B])
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i],
+        b = P[(i + 1) % P.length],
+        ax = a[1] - b[1],
+        ay = b[0] - a[0];
+      const [a0, a1] = _proj(A, ax, ay),
+        [b0, b1] = _proj(B, ax, ay);
+      if (a1 < b0 || b1 < a0) return false;
+    }
+  return true;
+}
+const _segD = (p, a, b) => {
+  const ex = b[0] - a[0],
+    ez = b[1] - a[1],
+    l = ex * ex + ez * ez || 1e-12,
+    t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ez) / l));
+  return Math.hypot(p[0] - a[0] - t * ex, p[1] - a[1] - t * ez);
+};
+function polyDist(A, B) {
+  if (overlap(A, B)) return 0;
+  let d = 1e9;
+  for (const [P, Q] of [
+    [A, B],
+    [B, A],
+  ])
+    for (const p of P)
+      for (let i = 0; i < Q.length; i++)
+        d = Math.min(d, _segD(p, Q[i], Q[(i + 1) % Q.length]));
+  return d;
+}
+// the nearest pair of points between two polygons (for the sensors' arcs and the tags): [d, pointOnA, pointOnB]
+function nearest(A, B) {
+  let best = [1e9, null, null];
+  for (const [P, Q, sw] of [
+    [A, B, 0],
+    [B, A, 1],
+  ])
+    for (const p of P)
+      for (let i = 0; i < Q.length; i++) {
+        const a = Q[i],
+          b = Q[(i + 1) % Q.length],
+          ex = b[0] - a[0],
+          ez = b[1] - a[1],
+          l = ex * ex + ez * ez || 1e-12,
+          t = Math.max(
+            0,
+            Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ez) / l),
+          ),
+          q = [a[0] + t * ex, a[1] + t * ez],
+          d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+        if (d < best[0]) best = sw ? [d, q, p] : [d, p, q];
+      }
+  return best;
+}
+
+// ======================================================================= the sets: a street with a kerb, a car park with square bays, and one with bays at 45°
+// Each obstacle is a parked car (a pose: its own back axle) or a kerb (tyres may not cross the line z = k from the road side).
+// The other cars are the same hatchback in other paints.
+const BAY = { w: 2.5, d: 5.0, aisle: 6.5, z: -0.6 }; // bays 2.5 × 5.0 m, a 6.5 m aisle; z: the line across the bays' mouths
+const ANG = { a: 45, w: 2.5, d: 5.0, z: -0.9 }; // the 45° bays: 2.5 m wide square to their lines, so 3.54 m along the aisle
+ANG.pitch = ANG.w / Math.sin((ANG.a * Math.PI) / 180);
+ANG.th = Math.PI - (ANG.a * Math.PI) / 180;
+ANG.ax = [Math.cos(ANG.th), -Math.sin(ANG.th)];
+const STREET = { kerb: -3.0, gap: 1.5 * CARD.len }; // the kerb's face; a gap one and a half car lengths long (6.43 m)
+STREET.pz = STREET.kerb + 0.25 + CARD.hw; // the parked cars' centre line: 25 cm off the kerb
+// ParkWise palette: the learner in signal yellow; the parked cars in everyday street colours (pearl white, grey, teal, maroon, silver, slate, blue)
+const PAINTS = {
+  sage: '#f2b400',
+  linen: '#eef0f2',
+  graphite: '#6b717b',
+  slate: '#1d7f78',
+  oak: '#7a2337',
+  clay: '#c3c7cc',
+  moss: '#33465e',
+  navy: '#2f64c8',
+};
+// a parked car whose body is centred at (cx, cz), facing th: its back axle's pose
+const parkedAt = (cx, cz, th) => {
+  const m = (CARD.fb - CARD.ro) / 2;
+  return { x: cx - Math.cos(th) * m, z: cz + Math.sin(th) * m, th };
+};
+// bay k's car: nose in (facing the back of the bay) or reversed in, its body centred in the bay a little in from the mouth
+const bayCar = (k, rev, paint, dx = 0) => ({
+  pose: parkedAt(
+    k * BAY.w + dx,
+    BAY.z - 0.35 - CARD.len / 2,
+    rev ? -Math.PI / 2 : Math.PI / 2,
+  ),
+  paint,
+});
+const angCar = (k, paint) => {
+  const xc = k * ANG.pitch,
+    dd = ANG.d - 0.35 - CARD.len / 2;
+  return {
+    pose: parkedAt(xc + ANG.ax[0] * dd, ANG.z + ANG.ax[1] * dd, ANG.th),
+    paint,
+  };
+};
+const SETS = {
+  street: {
+    cars: [
+      {
+        pose: { x: -STREET.gap / 2 - CARD.ro, z: STREET.pz, th: Math.PI },
+        paint: PAINTS.linen,
+      },
+      {
+        pose: { x: STREET.gap / 2 + CARD.fb, z: STREET.pz, th: Math.PI },
+        paint: PAINTS.slate,
+      },
+      {
+        pose: {
+          x: -STREET.gap / 2 - CARD.len - 1.3 - CARD.ro,
+          z: STREET.pz,
+          th: Math.PI,
+        },
+        paint: PAINTS.oak,
+      },
+    ],
+    kerbs: [STREET.kerb],
+  },
+  bays: {
+    cars: [
+      bayCar(-1, 1, PAINTS.graphite),
+      bayCar(1, 0, PAINTS.linen),
+      bayCar(-2, 0, PAINTS.clay),
+      bayCar(2, 1, PAINTS.navy, 0.1),
+      bayCar(3, 0, PAINTS.oak),
+    ],
+    kerbs: [],
+  },
+  fbays: {
+    cars: [
+      bayCar(1, 1, PAINTS.linen),
+      bayCar(-2, 0, PAINTS.clay),
+      bayCar(2, 0, PAINTS.navy, 0.1),
+      bayCar(3, 1, PAINTS.oak),
+      bayCar(-3, 1, PAINTS.graphite),
+    ],
+    kerbs: [],
+  },
+  angle: {
+    cars: [
+      angCar(-1, PAINTS.graphite),
+      angCar(1, PAINTS.linen),
+      angCar(2, PAINTS.clay),
+      angCar(-2, PAINTS.navy),
+    ],
+    kerbs: [],
+  },
+  // the street again, tilted 1 in 10: up the hill is -x. A car parked up the hill, and one below with room to roll into
+  hill: {
+    cars: [
+      {
+        pose: { x: -5.2 - CARD.ro, z: STREET.pz, th: Math.PI },
+        paint: PAINTS.navy,
+      },
+      {
+        pose: { x: 8.0 + CARD.fb, z: STREET.pz, th: Math.PI },
+        paint: PAINTS.linen,
+      },
+    ],
+    kerbs: [STREET.kerb],
+  },
+};
+const HILL = { grade: 0.1 };
+HILL.a = Math.atan(HILL.grade);
+HILL.pull = 9.81 * Math.sin(HILL.a); // m/s² down the slope (1.0 m/s²: a tenth of the weight)
+HILL.roll = 9.81 * (Math.sin(HILL.a) - 0.012 * Math.cos(HILL.a)); // what is left after the tyres' rolling resistance (a typical 0.012)
+for (const k in SETS) SETS[k].polys = SETS[k].cars.map((c) => carPoly(c.pose));
+// the end of each bay is a low kerb: the bays' back line (square bays) for the wheels; the angled bays end on a kerb too
+SETS.bays.backZ = SETS.fbays.backZ = BAY.z - BAY.d;
+SETS.angle.backD = ANG.d;
+
 // ======================================================================= the showroom: navy walls, hologram panels, amber strips, a polished floor, windows onto dusk hills
 // Room units are 25 cm. The training ground (a slab of real road, 25 × 15 m) fills the middle of a tall hall; there is no ceiling to see from up here.
 let _dt = 0.016,
@@ -4157,6 +4466,230 @@ function setSet(name) {
   renderer.shadowMap.needsUpdate = true;
 }
 
+// ======================================================================= the learner's car, posed: where it is, its front wheels turned to their own angles, each wheel rolled by its own travel,
+// the brake lamps bright while it slows or stands, the reversing lamps on while it goes backwards, the indicator flashing while you signal
+const LIVE = {
+  x: 0,
+  z: 0,
+  th: 0,
+  st: 0,
+  dir: 0,
+  v: 0,
+  wt: [0, 0, 0, 0],
+  sig: 0,
+  brake: 0,
+  rev: 0,
+};
+const CUR = { x: 0, z: 0, th: 0, st: 0, dir: 0, v: 0 }; // the car as it is drawn this frame: the clock's pose, or yours in practice
+function applyCar(p) {
+  const C = LEARNER;
+  poseCar(C.car, p);
+  C.wheels.forEach((W, j) => {
+    W.pivot.rotation.y = j >= 2 ? wheelAng(p.st, W.side * CARD.tw) : 0;
+    W.spin.rotation.z = ((W.side > 0 ? -1 : 1) * p.wt[j]) / R_TYRE;
+  });
+  const blink = LIVE.sig && (NOW * 1.5) % 1 < 0.5;
+  C.lamps.r.visible = LIVE.sig > 0 && blink;
+  C.lamps.l.visible = LIVE.sig < 0 && blink;
+  C.lamps.rev.visible = !!LIVE.rev;
+  C.U.uTail.value = LIVE.brake ? 1.1 : 0.22;
+}
+
+// ======================================================================= practice: you drive. Hold forwards or reverse to creep; turn the wheel and it stays where you leave it, as a real one does.
+// The same model moves the car (stepped in 2 cm pieces); a touch stops it where it touched, and the coach watches each step.
+const DRV = {
+  x: 0,
+  z: 0,
+  th: 0,
+  st: 0,
+  v: 0,
+  dir: 0,
+  wt: [0, 0, 0, 0],
+  touches: 0,
+  moves: 0,
+  lastDir: 0,
+  bump: null,
+  bumpAt: -9,
+  parked: null,
+  step: 1,
+  stepAt: 0,
+  start: null,
+  stillT: 0,
+};
+const INP = { fwd: 0, rev: 0, left: 0, right: 0, steerTo: null, pullV: null };
+const DRIVE = {
+  vf: 0.9,
+  vr: 0.7,
+  acc: 1.1,
+  dec: 2.2,
+  steerRate: 1.1 / LOCK_TURNS,
+}; // m/s forwards and back, m/s², lock a second while a key is held (1.1 turns a second)
+function driveReset() {
+  const m = man(),
+    s = m.start;
+  Object.assign(DRV, {
+    x: s.x,
+    z: s.z,
+    th: s.th,
+    st: 0,
+    v: 0,
+    dir: 0,
+    wt: [0, 0, 0, 0],
+    touches: 0,
+    touchAt: null,
+    rest: null,
+    moves: 0,
+    lastDir: 0,
+    bump: null,
+    bumpAt: -9,
+    parked: null,
+    step: 1,
+    stepAt: NOW,
+    start: { ...s },
+    stillT: 0,
+  });
+  INP.steerTo = null;
+  coachSync(true);
+}
+const _poly = PLAN_P.map(() => [0, 0]);
+// a touch: the body against a parked car, a tyre against a kerb, or the car off the edge of the slab
+function touchAt(p, st) {
+  const s = SETS[SET_NOW],
+    poly = carPoly(p, _poly);
+  for (let j = 0; j < s.polys.length; j++)
+    if (overlap(poly, s.polys[j])) {
+      const [d, a, b] = nearest(poly, s.polys[j]);
+      return { kind: 'car', at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+    }
+  for (const kz of s.kerbs) {
+    const T = tyrePolys(p, st);
+    for (let w = 0; w < 4; w++)
+      for (const [x, z] of T[w])
+        if (z < kz) return { kind: 'kerb', w, at: [x, kz] };
+  }
+  const bz0 =
+    s.backZ !== undefined
+      ? s.backZ
+      : SET_NOW === 'angle'
+        ? ANG.z + ANG.ax[1] * ANG.d - 0.3
+        : -99;
+  for (const q of poly) {
+    if (q[1] < bz0 + 0.02 && SET_NOW !== 'street') {
+      const T = tyrePolys(p, st);
+      for (const t of T)
+        for (const [x, z] of t)
+          if (z < bz0) return { kind: 'kerb', at: [x, bz0] };
+    }
+    if (
+      q[0] < SLAB.x0 + 0.1 ||
+      q[0] > SLAB.x1 - 0.1 ||
+      q[1] < SLAB.z0 + 0.1 ||
+      q[1] > SLAB.z1 - 0.1
+    )
+      return {
+        kind: 'edge',
+        at: [clamp(q[0], SLAB.x0, SLAB.x1), clamp(q[1], SLAB.z0, SLAB.z1)],
+      };
+  }
+  return null;
+}
+const _dp = { x: 0, z: 0, th: 0 };
+function driveStep(dt) {
+  // the wheel: held keys turn it at a steady rate; dragging the wheel sets where it goes
+  if (INP.steerTo !== null) {
+    const d = INP.steerTo - DRV.st;
+    DRV.st += clamp(d, -DRIVE.steerRate * 2.5 * dt, DRIVE.steerRate * 2.5 * dt);
+  }
+  const sk = (INP.right ? 1 : 0) - (INP.left ? 1 : 0);
+  if (sk) {
+    INP.steerTo = null;
+    DRV.st = clamp(DRV.st + sk * DRIVE.steerRate * dt, -1, 1);
+  }
+  // the pedals: creep towards walking pace, brake to a stop when let go; a pedal the other way brakes first
+  const want =
+    INP.pullV != null
+      ? INP.pullV
+      : INP.fwd && !INP.rev
+        ? DRIVE.vf
+        : INP.rev && !INP.fwd
+          ? -DRIVE.vr
+          : 0;
+  const a =
+    (Math.sign(want) !== Math.sign(DRV.v) && DRV.v !== 0) || want === 0
+      ? DRIVE.dec
+      : DRIVE.acc;
+  DRV.v += clamp(want - DRV.v, -a * dt, a * dt);
+  if (Math.abs(DRV.v) < 1e-3 && !want) DRV.v = 0;
+  const dir = Math.sign(DRV.v);
+  if (dir && dir !== DRV.lastDir) {
+    if (DRV.lastDir) DRV.moves++;
+    DRV.lastDir = dir;
+  }
+  if (dir) DRV.dir = dir;
+  // move in pieces of at most 2 cm; a piece that would touch something is not taken, and the car stops there
+  let ds = DRV.v * dt;
+  const n = Math.max(1, Math.ceil(Math.abs(ds) / 0.02));
+  for (let i = 0; i < n; i++) {
+    const h = ds / n;
+    _dp.x = DRV.x;
+    _dp.z = DRV.z;
+    _dp.th = DRV.th;
+    stepPose(_dp, h, DRV.st);
+    const hit = touchAt(_dp, DRV.st);
+    if (
+      hit &&
+      MK === 'hill' &&
+      hit.kind === 'kerb' &&
+      hit.w === 3 &&
+      h < 0 &&
+      DRV.st < -0.5
+    ) {
+      DRV.rest = hit;
+      DRV.v = 0;
+      break;
+    }
+    if (hit) {
+      // one touch per contact: pushing on against the same thing does not count again until the car has moved away from it
+      if (
+        !DRV.bump &&
+        (!DRV.touchAt ||
+          Math.hypot(DRV.x - DRV.touchAt[0], DRV.z - DRV.touchAt[1]) > 0.05)
+      ) {
+        DRV.touches++;
+        sfx('bump');
+        ERR.jolt = NOW;
+      }
+      DRV.touchAt = [DRV.x, DRV.z];
+      DRV.bumpAt = NOW;
+      DRV.bump = hit;
+      DRV.v = 0;
+      break;
+    }
+    const w0 = WPOS.map(([a, b]) => toG(DRV, a, b));
+    DRV.x = _dp.x;
+    DRV.z = _dp.z;
+    DRV.th = _dp.th;
+    WPOS.forEach(([a, b], j) => {
+      const q = toG(DRV, a, b);
+      DRV.wt[j] += Math.hypot(q[0] - w0[j][0], q[1] - w0[j][1]) * Math.sign(h);
+    });
+  }
+  if (DRV.bump && NOW - DRV.bumpAt > 1.6) DRV.bump = null;
+  if (DRV.rest && DRV.v > 0.01) DRV.rest = null;
+  if (
+    DRV.touchAt &&
+    Math.hypot(DRV.x - DRV.touchAt[0], DRV.z - DRV.touchAt[1]) > 0.05
+  )
+    DRV.touchAt = null;
+  DRV.stillT = Math.abs(DRV.v) < 0.01 ? DRV.stillT + dt : 0;
+  coachStep();
+}
+const WPOS = [
+  [0, -CARD.tw],
+  [0, CARD.tw],
+  [CARD.L, -CARD.tw],
+  [CARD.L, CARD.tw],
+];
 // ======================================================================= the light: the showroom at dusk, with dusk showroom render tuning
 Object.assign(RT, {
   pixelRatio: clamp(1.6, 1, Math.max(1, devicePixelRatio)),

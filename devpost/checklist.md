@@ -19,7 +19,7 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
   Learner check: Open it and say whether the scene looks like the parking setting you pictured.
   Commit: `Set up project and render the 3D parking scene`
 
-- [ ] **2. You can drive the car**
+- [x] **2. You can drive the car**
   Becomes usable: Keyboard control (arrow keys / WASD) drives the car — forward, reverse, steering — and it moves like a real car rather than sliding or spinning.
   Why now: Driving is the heart of the tool, so it comes early, not last. This is also where we check the trickiest part first: that reversing curves the car the correct way before we build anything on top of it. If a simple movement approach feels off, we try a more faithful steering model — decide by testing, not upfront.
   PRD ref: `prd.md > Features and Behavior > Driving the car (interactive, physics-based)`
