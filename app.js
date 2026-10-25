@@ -2089,14 +2089,14 @@ const STREET = { kerb: -3.0, gap: 1.5 * CARD.len }; // the kerb's face; a gap on
 STREET.pz = STREET.kerb + 0.25 + CARD.hw; // the parked cars' centre line: 25 cm off the kerb
 // ParkWise palette: the learner in signal yellow; the parked cars in everyday street colours (pearl white, grey, teal, maroon, silver, slate, blue)
 const PAINTS = {
-  sage: '#f2b400',
-  linen: '#eef0f2',
-  graphite: '#6b717b',
-  slate: '#1d7f78',
-  oak: '#7a2337',
-  clay: '#c3c7cc',
-  moss: '#33465e',
-  navy: '#2f64c8',
+  sage: '#c4962e',
+  linen: '#cfcdc6',
+  graphite: '#4d5157',
+  slate: '#2f5551',
+  oak: '#5a2b33',
+  clay: '#8d9298',
+  moss: '#2b3442',
+  navy: '#3a5070',
 };
 // a parked car whose body is centred at (cx, cz), facing th: its back axle's pose
 const parkedAt = (cx, cz, th) => {
@@ -2562,7 +2562,7 @@ const FLOOR = (() => {
     for (let i = 0; i < n; i++)
       for (let j = 0; j < n; j++) {
         const v = r2();
-        g.fillStyle = `hsl(${205 + v * 10},${4 + v * 3}%,${76 + v * 6}%)`;
+        g.fillStyle = `hsl(${30 + v * 8},${6 + v * 4}%,${46 + v * 6}%)`;
         g.fillRect(i * s, j * s, s, s);
         for (let k = 0; k < 70; k++) {
           g.fillStyle = `rgba(${r2() > 0.5 ? 255 : 90},${r2() > 0.5 ? 255 : 92},${r2() > 0.5 ? 255 : 96},${0.03 + r2() * 0.04})`;
@@ -2579,7 +2579,7 @@ const FLOOR = (() => {
           g.fill();
         }
       }
-    g.strokeStyle = '#9aa3ad';
+    g.strokeStyle = '#5c544b';
     g.lineWidth = 4;
     for (let i = 0; i <= n; i++) {
       g.beginPath();
@@ -2613,10 +2613,10 @@ const FLOOR = (() => {
 })();
 // ---- the back wall: slate panels with seams, a warm cove at the top, a strip at the floor, two columns with vertical amber light lines, a window on the left
 // ParkWise: the yard's building front, cream render with grey seams, white aluminium trim, a blue band under the roofline
-const WALL = M('#ece7dc', { roughness: 0.9, envMapIntensity: 0.4 }),
-  WALL_D = M('#d3cdc1', { roughness: 0.9 }),
-  TRIM = MET('#c9ced6', { roughness: 0.45, metalness: 0.6 }),
-  BAND = M('#2453d6', { roughness: 0.6 });
+const WALL = M('#9c5a43', { roughness: 0.9, envMapIntensity: 0.35 }),
+  WALL_D = M('#7e4534', { roughness: 0.9 }),
+  TRIM = MET('#4a4f57', { roughness: 0.45, metalness: 0.6 }),
+  BAND = M('#23324f', { roughness: 0.6 });
 const WIN0 = -60,
   WIN1 = -36; // the window in the back wall, x from .. to
 {
@@ -2680,7 +2680,7 @@ const WIN0 = -60,
       2048,
       150,
       (g, w, h) => {
-        g.fillStyle = '#2453d6';
+        g.fillStyle = '#23324f';
         g.fillRect(0, 0, w, h);
         g.fillStyle = '#ffffff';
         g.font = '800 104px Plus Jakarta Sans, sans-serif';
@@ -2884,7 +2884,7 @@ const PAVE_M = (() => {
     for (let i = 0; i < n; i++)
       for (let j = 0; j < n; j++) {
         const v = r2();
-        g.fillStyle = `hsl(${36 + v * 6},${5 + v * 3}%,${52 + v * 8}%)`;
+        g.fillStyle = `hsl(${30 + v * 6},${7 + v * 3}%,${40 + v * 6}%)`;
         g.fillRect(i * s, j * s, s, s);
         for (let k = 0; k < 300; k++) {
           g.fillStyle = `rgba(${r2() > 0.5 ? 240 : 60},${r2() > 0.5 ? 235 : 60},230,${0.04 + r2() * 0.05})`;
@@ -7482,11 +7482,11 @@ Object.assign(RT, {
 Object.assign(RT0, RT);
 // ParkWise daylight: a high, slightly cool noon sun from the front left, a bright sky fill, almost no bloom, the floor matte
 const VIEW = {
-  bg: '#d7e6f4',
-  fog: '#dfeaf5',
+  bg: '#bcd2e6',
+  fog: '#c9d8e6',
   fogD: 0.0011,
   tone: THREE.ACESFilmicToneMapping,
-  exp: 1.12,
+  exp: 1.0,
   envI: 1.0,
   bloomT: 2.4,
   bloomS: 0.18,
