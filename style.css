@@ -1434,3 +1434,23 @@ dialog code {
     background: linear-gradient(0deg, #eef2f7aa, transparent 30%);
   }
 }
+
+/* stronger edges on the player controls and the progress bar */
+.stepper > button {
+  border: 1.5px solid #b9b0a2;
+}
+.stepper > button.go {
+  border: 2px solid #8a6200;
+}
+.tl .tr {
+  box-shadow: inset 0 0 0 1.5px #a59c8e;
+}
+.tl .fl {
+  box-shadow: inset 0 0 0 1.5px #1236a8;
+}
+.tl .tk {
+  background: #a59c8e;
+}
+.tl .nums {
+  color: #6f675c;
+}
