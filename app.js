@@ -8160,6 +8160,11 @@ function setWrong(on) {
   WRONG = on ? 1 : 0;
   ANIM = null;
   TT = 0;
+  // reset the player cleanly, then run the whole thing as a normal play so the button shows pause and pauses
+  setCine(false);
+  PLAYALL = true;
+  $('#play').classList.add('on');
+  $('#play-ic').innerHTML = '<path d="M8 5v14M16 5v14"/>';
   playStep(1);
 }
 function stepClock() {
