@@ -2597,9 +2597,9 @@ const FLOOR = (() => {
   const fm = patch(
     new THREE.MeshStandardMaterial({
       map: tex,
-      roughness: 0.82,
-      metalness: 0,
-      envMapIntensity: 0.4,
+      roughness: 0.26,
+      metalness: 0.05,
+      envMapIntensity: 0.7,
     }),
     reflExtra,
   );
@@ -2869,9 +2869,9 @@ const ASPH = (() => {
   return patch(
     new THREE.MeshStandardMaterial({
       map: tex,
-      roughness: 0.88,
+      roughness: 0.62,
       metalness: 0,
-      envMapIntensity: 0.25,
+      envMapIntensity: 0.55,
     }),
   );
 })();
@@ -7488,9 +7488,9 @@ const VIEW = {
   tone: THREE.ACESFilmicToneMapping,
   exp: 1.0,
   envI: 1.0,
-  bloomT: 2.4,
-  bloomS: 0.18,
-  refl: 0.06,
+  bloomT: 1.5,
+  bloomS: 0.42,
+  refl: 0.45,
   hemi: [0xe4eefa, 0x8d8a80, 0.95],
   sun: [0xfffaf0, 2.2],
   sunDir: [-0.38, 0.9, 0.42],
