@@ -30,7 +30,7 @@ Novice drivers consistently report parallel and reverse-bay parking as their gre
    * Live steering wheel reticle showing exact wheel rotations and lock angles.
    * Dynamic trajectory arcs showing front bumper swing and rear cut.
 
-3. **"Try It the Wrong Way" Failure Demonstration:**
+3. **"See the Classic Mistake" Demonstration:**
    * One-click simulation demonstrating the physics of common mistakes (e.g. holding full lock too long and grinding tyres into the curb).
 
 4. **Interactive Practice Drive Mode:**
@@ -39,10 +39,15 @@ Novice drivers consistently report parallel and reverse-bay parking as their gre
    * Real-time collision detection against curbs and neighboring vehicles.
 
 5. **Multi-Camera Viewport:**
-   * **3D Isometric:** Full orbit, zoom, and pan around the scene.
-   * **Above:** Bird's-eye orthogonal perspective for spatial awareness.
-   * **Behind:** Dynamic third-person chase camera.
-   * **Seat POV:** Realistic cockpit perspective with working rear-view and wing mirrors.
+   * **Orbit:** Full orbit, zoom, and pan around the yard.
+   * **Top:** Bird's-eye view for spatial awareness.
+   * **Chase:** Third-person camera riding behind the car.
+   * **Driver:** Cockpit view with working rear-view and wing mirrors.
+
+7. **Driving-School Yard Look:**
+   * A daylight yard with a terracotta school building, polished floor reflections, black-and-yellow kerbs and a learner car with a roof sign.
+   * A light paper-style HUD: top bar for manoeuvres and cameras, a lesson card on the right, a steering gauge and a player dock at the bottom.
+   * Left- or right-hand traffic, auto-detected from your browser region.
 
 6. **100% Procedural & Self-Contained:**
    * Zero external image, audio, or model asset downloads.
@@ -58,9 +63,8 @@ Novice drivers consistently report parallel and reverse-bay parking as their gre
 
 ### Installation & Launch
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/parkpilot-3d.git
-cd parkpilot-3d
+# From the project folder
+cd parkwise
 
 # Start the local server
 npm start
@@ -79,6 +83,7 @@ This project was designed and built following the official **Devpost Learn** eng
 * 📄 [**Product Requirements Document (PRD)**](devpost/prd.md) : Complete user journey and functional specifications.
 * 📄 [**Technical Specification**](devpost/spec.md) : Kinematics math, WebGL shaders, and audio architecture.
 * 📄 [**Build Checklist**](devpost/checklist.md) : Verified incremental build log.
+* 🗺️ [**App Map**](devpost/app-map.html) : Where each part of the code lives and how a frame flows through it.
 
 ---
 
@@ -86,7 +91,7 @@ This project was designed and built following the official **Devpost Learn** eng
 * **Graphics:** [Three.js](https://threejs.org/) (WebGL) with custom GTAO, Bloom, and SMAA post-processing.
 * **Physics:** Custom discrete bicycle kinematic model ($R = L / \tan(\delta)$).
 * **Audio:** Web Audio API procedural synthesis.
-* **Styling:** Vanilla CSS with custom glassmorphic HUD components.
+* **Styling:** Vanilla CSS, paper-style HUD (Plus Jakarta Sans + JetBrains Mono, bundled locally).
 
 ---
 

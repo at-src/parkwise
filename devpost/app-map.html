@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ParkWise · App Map</title>
+<style>
+  :root { --ink:#0f1a2e; --mute:#6f7c96; --blue:#2563ff; --sun:#ffbf1f; --red:#e5484d; --green:#12a150; --line:#d8d1c5; --paper:#fbf9f5; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#eee9e1; color:var(--ink); font:15px/1.6 'Segoe UI', system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; margin: 0 0 4px; letter-spacing:-.5px; }
+  h1 b { color: var(--blue); }
+  .kick { font: 700 11px/1 Consolas, monospace; letter-spacing:.1em; text-transform:uppercase; color:var(--blue); }
+  h2 { font-size: 18px; margin: 34px 0 10px; padding-left: 10px; border-left: 4px solid var(--sun); }
+  p { margin: 0 0 12px; }
+  code { font: 13px Consolas, monospace; background:#fff; border:1px solid var(--line); padding:1px 5px; border-radius:4px; }
+  .flow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
+  .flow span { background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-weight:600; font-size:13.5px; }
+  .flow i { color:var(--mute); font-style:normal; }
+  table { width:100%; border-collapse:collapse; background:var(--paper); border-radius:10px; overflow:hidden; box-shadow:0 8px 24px -16px #0f1a2e55; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; font-size:14px; }
+  th { background:#fff; font:700 11px Consolas, monospace; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
+  td:first-child { white-space:nowrap; font: 13px Consolas, monospace; color:var(--mute); }
+  .tag { display:inline-block; font:700 10px Consolas, monospace; padding:2px 6px; border-radius:4px; text-transform:uppercase; }
+  .eng { background:#e5484d1a; color:var(--red); }
+  .vis { background:#2563ff1a; color:var(--blue); }
+  .ui  { background:#12a1501a; color:var(--green); }
+  .box { background:var(--paper); border:1px solid var(--line); border-left:4px solid var(--blue); border-radius:8px; padding:14px 16px; margin:12px 0; }
+  ol li { margin-bottom:6px; }
+</style>
+</head>
+<body>
+<main>
+  <span class="kick">ParkWise · code tour</span>
+  <h1>Park<b>Wise</b> app map</h1>
+  <p>Three files do all the work: <code>index.html</code> (the page and every control), <code>style.css</code> (the paper-style HUD) and <code>app.js</code> (the 3D yard, the physics, the coach). <code>app.js</code> is one file split into sections, each starting with a <code>// =====</code> banner. Search for a banner to jump straight to it.</p>
+
+  <h2>The one idea that holds it together</h2>
+  <div class="box"><b>The model decides, everything else draws.</b> A car is a pose: the back axle's <code>x, z</code>, a heading <code>th</code> and the wheel <code>st</code> (−1…1). <code>stepPose()</code> moves it like a real car (a kinematic bicycle: it turns about one point on the rear-axle line, <code>R = wheelbase / tan(steer)</code>). The meshes, labels, wall boards and HUD only <em>read</em> that pose. That's why the whole look could change without touching the physics.</div>
+
+  <h2>One frame, start to finish</h2>
+  <div class="flow">
+    <span>tick()</span><i>→</i><span>stepClock / driveStep</span><i>→</i><span>CUR pose</span><i>→</i><span>applyCar (meshes)</span><i>→</i><span>explanation layer (lines + tags)</span><i>→</i><span>redrawHolo (wall boards)</span><i>→</i><span>syncDom (HUD)</span><i>→</i><span>render</span>
+  </div>
+  <p>Watching: the clock <code>TT</code> runs along a pre-integrated path and <code>poseAt</code> gives the pose. Practising: <code>driveStep()</code> moves the car from your keys in 2 cm pieces, and <code>touchAt()</code> stops it at a car, a kerb or the slab's edge.</p>
+
+  <h2>Where things live in app.js</h2>
+  <table>
+    <tr><th>Section banner</th><th>What it is</th><th>Kind</th></tr>
+    <tr><td>renderer · post</td><td>Three.js renderer, lights, environment maps, floor reflection, bloom / AO / SMAA</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>build helpers</td><td>Materials <code>M / P / MET</code>, <code>Build()</code> mesh batching, <code>plate()</code> canvas text</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>the explanation layer</td><td><code>Ribbons</code> (ground lines) and <code>tag()</code> (white labels)</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>the model</td><td><code>CARD</code> dimensions, <code>stepPose</code>, Ackermann <code>wheelAng</code>, car outline <code>PLAN_P</code>, collision <code>overlap / nearest</code></td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the sets</td><td>Where parked cars and kerbs are; paint colours; hill slope</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the manoeuvres</td><td><code>MAN</code>: each manoeuvre's steps (moves, steer, distance) and its mistake variant</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the showroom · training ground</td><td>The yard: building, boards, floor, road, kerbs, lamps, P sign</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>the car · the wheels · the cars</td><td>Lofted hatchback body, roof sign, ten-spoke alloys, parked-car pool</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>paths and clock</td><td><code>plan()</code> speeds and times along each path; <code>poseAt</code></td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>what the model says</td><td><code>FACT</code>: the numbers the text quotes (cm to kerb, angles)</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the explanation over the scene</td><td>Pivot point, arcs, chevrons, sensors, per-step cues</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>practice</td><td><code>driveStep</code>, <code>touchAt</code>, <code>parkedness</code> (the verdict), <code>COACH</code> prompts</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>sound</td><td>Web Audio beeps and clicks</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the wall's three panels</td><td><code>drawPivot / drawPlan / drawWheel</code> on the boards</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>the light</td><td><code>VIEW</code>: sky, fog, sun, bloom, reflection strength</td><td><span class="tag vis">visual</span></td></tr>
+    <tr><td>the camera</td><td>Per-step shots, orbit / top / chase / driver, picking and drag</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the clock (play a step)</td><td><code>playStep</code>, <code>setWrong</code>, <code>setCine</code> (play / pause)</td><td><span class="tag eng">engine</span></td></tr>
+    <tr><td>the card</td><td>HUD wiring: tabs, step bar, steering gauge, <code>STEP_WORDS</code>, <code>WRONG_WORDS</code>, <code>syncDom</code></td><td><span class="tag ui">ui</span></td></tr>
+    <tr><td>frame · boot</td><td><code>tick()</code>, <code>layout()</code>, resize, start-up</td><td><span class="tag eng">engine</span></td></tr>
+  </table>
+
+  <h2>Where to change what</h2>
+  <ol>
+    <li><b>Colours of the yard:</b> <code>WALL</code>, <code>BAND</code>, <code>TRIM</code> in the showroom section; floor tiles in <code>FLOOR</code>.</li>
+    <li><b>Car paints:</b> <code>PAINTS</code> in the sets section (<code>sage</code> is the learner car).</li>
+    <li><b>Daylight and shine:</b> <code>VIEW</code> in the light section (<code>refl</code>, <code>bloomS</code>, <code>exp</code>).</li>
+    <li><b>Words:</b> step titles in <code>MAN</code>, explanations in <code>STEP_WORDS</code>, coach prompts in <code>COACH</code>, help in <code>index.html</code>'s dialog.</li>
+    <li><b>HUD look:</b> CSS variables at the top of <code>style.css</code>.</li>
+  </ol>
+
+  <h2>Practice: reuse it yourself</h2>
+  <div class="box">Change the slope from 1 in 10 to 1 in 6. Find <code>HILL</code> in the sets section and set <code>grade</code> to <code>1 / 6</code>. Reload and play the Slope manoeuvre. The slab tilts more, the roll-back distance in the text changes, and the "kN" figure goes up, all without editing any text, because the words read <code>FACT</code> and <code>HILL</code>. Then put it back.</div>
+</main>
+</body>
+</html>

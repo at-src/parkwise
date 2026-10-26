@@ -76,19 +76,19 @@ Build mode: fast — chosen for focused execution; still pausing for hands-on fe
 
 ## Final Review
 
-- [ ] Final review complete — feedback resolved and learner confirms ready to ship
+- [x] Final review complete — feedback resolved and learner confirms ready to ship
 
 ## Code Tour and App Map
 
-- [ ] Learning activity complete — guided route, focused alternative, prior practice connected, or brief recap
-- [ ] Optional edit and transfer reflection addressed — offered/declined/already covered/not applicable as appropriate
-- [ ] `devpost/app-map.html` generated from finished code, checked, and shown, including a project-grounded practice to reuse
+- [x] Learning activity complete — guided route, focused alternative, prior practice connected, or brief recap
+- [x] Optional edit and transfer reflection addressed — offered/declined/already covered/not applicable as appropriate
+- [x] `devpost/app-map.html` generated from finished code, checked, and shown, including a project-grounded practice to reuse
 
-Activity and evidence: [to fill during the wrap-up]
-Route and stops: [to fill]
-Edit outcome: [to fill]
-Reflection: [to fill]
-Activity mode: [to fill]
+Activity and evidence: Brief recap — all six slices verified in the browser (5 manoeuvres × 4 cameras × left/right traffic, practice, mistake mode), no console errors.
+Route and stops: model (kinematic bicycle) → sets → manoeuvres/paths → practice (driveStep, touchAt, parkedness, coach) → explanation layer → card UI; mapped in devpost/app-map.html.
+Edit outcome: Fixed angled-bay practice starting off the slab (driveStep now allows moves back onto the slab); fixed play/pause state after toggling the mistake.
+Reflection: Keeping the model separate from what is drawn meant the whole look could change without touching a line of the physics.
+Activity mode: brief recap
 
 ## Revisions
 
