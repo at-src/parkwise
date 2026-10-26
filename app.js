@@ -6548,6 +6548,20 @@ function touchAt(p, st) {
   return null;
 }
 const _dp = { x: 0, z: 0, th: 0 };
+// how far the car's outline hangs past the slab's edge (0 when it is wholly on it)
+const _edgeP = PLAN_P.map(() => [0, 0]);
+function edgeOut(p) {
+  let o = 0;
+  for (const q of carPoly(p, _edgeP))
+    o = Math.max(
+      o,
+      SLAB.x0 + 0.1 - q[0],
+      q[0] - (SLAB.x1 - 0.1),
+      SLAB.z0 + 0.1 - q[1],
+      q[1] - (SLAB.z1 - 0.1),
+    );
+  return o;
+}
 function driveStep(dt) {
   // the wheel: held keys turn it at a steady rate; dragging the wheel sets where it goes
   if (INP.steerTo !== null) {
@@ -6589,7 +6603,10 @@ function driveStep(dt) {
     _dp.z = DRV.z;
     _dp.th = DRV.th;
     stepPose(_dp, h, DRV.st);
-    const hit = touchAt(_dp, DRV.st);
+    let hit = touchAt(_dp, DRV.st);
+    // some manoeuvres start with the tail past the slab's edge: a move that brings the car back onto it is allowed, only going further off is stopped
+    if (hit && hit.kind === "edge" && edgeOut(_dp) <= edgeOut(DRV) + 1e-9)
+      hit = null;
     if (
       hit &&
       MK === 'hill' &&
